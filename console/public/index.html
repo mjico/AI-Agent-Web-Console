@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="google" content="notranslate" />
+  <title>WebAI 控制台</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f1ea;
+      --panel: #fffdf8;
+      --ink: #1c1915;
+      --muted: #6d655c;
+      --line: #e4ddd2;
+      --accent: #0f6e6b;
+      --accent-ink: #f7fffe;
+      --run: #1d4e89;
+      --ok: #1f7a3a;
+      --fail: #9d2430;
+      --fail-bg: #fdecef;
+      --wait: #8a5a00;
+      --wait-bg: #fff4d6;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      height: 100vh;
+      display: grid;
+      grid-template-rows: auto 1fr;
+      font: 15px/1.5 "Segoe UI", "Microsoft YaHei", sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+    }
+    header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 14px 18px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--line);
+    }
+    header h1 { margin: 0; font-size: 18px; letter-spacing: 0.04em; }
+    header p { margin: 0; color: var(--muted); }
+    .pill {
+      margin-left: auto;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: #ece7df;
+      color: var(--ink);
+      font-size: 13px;
+    }
+    .pill.run { background: #e5f0fb; color: var(--run); }
+    .pill.ok { background: #e5f6ea; color: var(--ok); }
+    .pill.fail { background: var(--fail-bg); color: var(--fail); }
+    .pill.wait { background: var(--wait-bg); color: var(--wait); }
+    main { display: grid; grid-template-columns: 320px 1fr; min-height: 0; }
+    aside, section { min-height: 0; }
+    aside {
+      padding: 16px;
+      overflow: auto;
+      border-right: 1px solid var(--line);
+      background: var(--panel);
+    }
+    label { display: block; margin: 12px 0 6px; color: var(--muted); font-size: 13px; }
+    select, textarea, button { font: inherit; }
+    select, textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--ink);
+      padding: 8px 10px;
+    }
+    button {
+      border: 0;
+      border-radius: 8px;
+      padding: 8px 12px;
+      background: var(--accent);
+      color: var(--accent-ink);
+      cursor: pointer;
+    }
+    button.secondary { background: #ece7df; color: var(--ink); }
+    button:disabled { opacity: 0.55; cursor: wait; }
+    .row { display: flex; gap: 8px; margin-top: 12px; }
+    .row button { flex: 1; }
+    .note { margin: 8px 0 0; color: var(--wait); font-size: 13px; }
+    .error { margin: 8px 0 0; color: var(--fail); font-size: 13px; }
+    .sessions { list-style: none; margin: 8px 0 0; padding: 0; }
+    .sessions button {
+      width: 100%;
+      margin: 0 0 6px;
+      text-align: left;
+      background: transparent;
+      color: var(--ink);
+      border: 1px solid transparent;
+    }
+    .sessions button.active, .sessions button:hover { border-color: var(--line); background: #f7f3ec; }
+    .chat { display: grid; grid-template-rows: 1fr auto; min-height: 0; }
+    .thread { overflow: auto; padding: 18px; }
+    .bubble { max-width: 760px; margin: 0 0 12px; padding: 10px 12px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); }
+    .bubble.user { margin-left: auto; background: #e7f4f3; }
+    .bubble.fail { background: var(--fail-bg); border-color: #f3c2c8; }
+    .who { display: block; margin-bottom: 4px; color: var(--muted); font-size: 12px; }
+    .usage { margin: -6px 0 14px; color: var(--muted); font-size: 12px; }
+    #usage-line { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+    .composer { display: grid; grid-template-columns: 1fr auto; gap: 8px; padding: 12px 18px 18px; }
+    textarea { min-height: 72px; resize: vertical; }
+    details { margin-top: 8px; }
+    .log { margin: 8px 0 0; padding: 0; list-style: none; color: var(--muted); font-size: 13px; }
+    .skills { margin: 0; padding-left: 18px; color: var(--muted); }
+  </style>
+</head>
+<body class="notranslate" translate="no">
+  <header>
+    <div>
+      <h1>WebAI 控制台</h1>
+      <p id="model-line">正在读取当前模型…</p>
+      <p id="usage-line">本会话还没有 token 记录</p>
+      <p class="note" style="margin:4px 0 0;color:var(--muted)">请用本页代替 Playground（<code>:3000</code>），并关闭浏览器的自动翻译。</p>
+    </div>
+    <span id="status" class="pill">连接中</span>
+  </header>
+  <main>
+    <aside>
+      <label for="project">Agent 项目</label>
+      <select id="project"></select>
+      <p id="project-meta" class="note" style="color:var(--muted);margin-top:4px"></p>
+      <label for="model">模型</label>
+      <select id="model"></select>
+      <div id="params"></div>
+      <p id="caution" class="note" hidden></p>
+      <p id="form-error" class="error" hidden></p>
+      <div class="row">
+        <button id="apply" type="button">应用模型</button>
+      </div>
+      <label>可用技能</label>
+      <ul id="skills" class="skills"></ul>
+      <label>历史会话</label>
+      <div class="row">
+        <button id="fresh" class="secondary" type="button">新对话</button>
+      </div>
+      <ul id="sessions" class="sessions"></ul>
+    </aside>
+    <section class="chat">
+      <div id="thread" class="thread"></div>
+      <form id="composer" class="composer">
+        <textarea id="message" placeholder="输入要交给 WebAI 的内容"></textarea>
+        <button id="send" type="submit">发送</button>
+      </form>
+    </section>
+  </main>
+  <script>
+    const EVENT_LABELS = {
+      "session.started": "新会话",
+      "session.waiting": "可以发下一条了",
+      "session.completed": "会话结束",
+      "session.failed": "会话出错",
+      "message.received": "收到你的消息",
+      "turn.queued": "排队等待处理",
+      "turn.started": "正在处理",
+      "turn.completed": "这一轮结束",
+      "turn.failed": "这一轮失败",
+      "step.started": "模型在想下一步",
+      "step.completed": "这一步结束",
+      "reasoning.completed": "思考结束",
+      "message.completed": "生成了一段回复",
+      "actions.requested": "正在调用工具",
+      "actions.completed": "工具调用结束",
+      "action.result": "某个工具返回了结果",
+      "action.approval_requested": "需要你点允许",
+      "action.approval_resolved": "授权已处理",
+      "action.auth_requested": "需要连接外部账号",
+      "action.auth_resolved": "账号已连接",
+      "action.tool_retry": "工具失败，正在重试",
+      "subagent.called": "派生子任务",
+      "subagent.completed": "子任务结束",
+      "nudge.delivered": "发送了提醒",
+    };
+
+    const TOOL_LABELS = {
+      Shell: "运行命令",
+      Grep: "搜索文件内容",
+      Glob: "按文件名查找",
+      Read: "读取文件",
+      Write: "写入文件",
+      StrReplace: "修改文件",
+      GetDynamicTools: "查看可用工具",
+      CallDynamicTool: "调用扩展工具",
+      Task: "启动子代理",
+    };
+
+    const LOG_SKIP = new Set([
+      "agent.bound",
+      "turn.bound",
+      "reasoning.appended",
+      "message.appended",
+      "action.result",
+      "artifact.tagged",
+      "action.effect_unclassified",
+    ]);
+
+    const state = {
+      models: [],
+      projects: [],
+      activeProjectId: null,
+      sessionId: null,
+      continuationToken: null,
+      events: [],
+      cost: null,
+      draft: "",
+    };
+
+    const usageLine = document.querySelector("#usage-line");
+
+    const projectSelect = document.querySelector("#project");
+    const projectMeta = document.querySelector("#project-meta");
+    const modelSelect = document.querySelector("#model");
+    const paramsBox = document.querySelector("#params");
+    const caution = document.querySelector("#caution");
+    const formError = document.querySelector("#form-error");
+    const statusPill = document.querySelector("#status");
+    const modelLine = document.querySelector("#model-line");
+    const thread = document.querySelector("#thread");
+    const sessions = document.querySelector("#sessions");
+    const skills = document.querySelector("#skills");
+
+    function formatCount(value) {
+      const n = Number(value) || 0;
+      return n.toLocaleString("zh-CN");
+    }
+
+    function sumUsage(events) {
+      const total = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, turns: 0 };
+      for (const event of events || []) {
+        const usage = event.type === "turn.completed" ? event.data?.usage : null;
+        if (!usage) continue;
+        total.turns += 1;
+        total.inputTokens += Number(usage.inputTokens) || 0;
+        total.outputTokens += Number(usage.outputTokens) || 0;
+        total.cacheReadTokens += Number(usage.cacheReadTokens) || 0;
+        total.cacheWriteTokens += Number(usage.cacheWriteTokens) || 0;
+      }
+      return total;
+    }
+
+    function formatTokenBits(usage) {
+      const parts = [
+        "输入 " + formatCount(usage.inputTokens),
+        "输出 " + formatCount(usage.outputTokens),
+      ];
+      if (usage.cacheReadTokens) parts.push("缓存读取 " + formatCount(usage.cacheReadTokens));
+      if (usage.cacheWriteTokens) parts.push("缓存写入 " + formatCount(usage.cacheWriteTokens));
+      const total = (Number(usage.inputTokens) || 0) + (Number(usage.outputTokens) || 0);
+      parts.push("合计 " + formatCount(total));
+      return parts.join(" · ");
+    }
+
+    function formatUsd(value) {
+      const n = Number(value);
+      if (!Number.isFinite(n) || n <= 0) return "";
+      return "费用约 $" + n.toLocaleString("zh-CN", { minimumFractionDigits: 4, maximumFractionDigits: 4 });
+    }
+
+    function renderUsage() {
+      const total = sumUsage(state.events);
+      if (!state.sessionId || total.turns === 0) {
+        usageLine.textContent = "本会话还没有 token 记录";
+        return;
+      }
+      const bits = [total.turns + " 轮", formatTokenBits(total)];
+      const price = formatUsd(state.cost?.costUsd);
+      if (price) bits.push(price);
+      usageLine.textContent = "本会话：" + bits.join(" · ");
+    }
+
+    function clearUsage() {
+      state.cost = null;
+      renderUsage();
+    }
+
+    async function loadCost(sessionId) {
+      if (!sessionId || sessionId !== state.sessionId) return;
+      try {
+        const response = await fetch("/v1/session/" + sessionId + "/cost");
+        if (!response.ok || sessionId !== state.sessionId) return;
+        state.cost = await response.json();
+        renderUsage();
+      } catch {
+        /* 费用接口失败时仍显示 token 计数 */
+      }
+    }
+
+    function setStatus(text, kind) {
+      statusPill.textContent = text;
+      statusPill.className = "pill" + (kind ? " " + kind : "");
+    }
+
+    function showError(text) {
+      formError.hidden = !text;
+      formError.textContent = text || "";
+    }
+
+    function selectedModel() {
+      return state.models.find((item) => item.id === modelSelect.value);
+    }
+
+    function describeEvent(event) {
+      if (LOG_SKIP.has(event.type)) return null;
+      if (event.type === "message.completed") {
+        if (event.data?.finishReason === "tool_call") return "准备调用工具";
+        if (event.data?.finishReason === "stop") return null;
+      }
+      if (event.type === "actions.requested") {
+        const names = [...new Set((event.data?.calls || []).map((call) => TOOL_LABELS[call.toolName] || call.toolName))];
+        return names.length ? "调用工具：" + names.join("、") : EVENT_LABELS[event.type];
+      }
+      if (event.type === "turn.completed" && event.data?.usage) {
+        return "这一轮结束 · " + formatTokenBits(event.data.usage);
+      }
+      return EVENT_LABELS[event.type] || null;
+    }
+
+    function explainFailure(message) {
+      const text = message || "这一轮没有完成。";
+      if (/team admin/i.test(text) || text.includes("模型被封锁") || text.includes("Model Blocked")) {
+        return "这个模型或这组参数已被团队管理员拦截。请换一个模型，或把「快速模式」关掉，再点一次「应用模型」。";
+      }
+      return text;
+    }
+
+    function refreshCaution() {
+      const model = selectedModel();
+      const notes = [];
+      if (model?.caution) notes.push(model.caution);
+      const fast = paramsBox.querySelector('[data-param="fast"]');
+      if (fast?.value === "true") notes.push("快速模式打开时，团队管理员可能拦截这个组合。");
+      caution.hidden = notes.length === 0;
+      caution.textContent = notes.join(" ");
+    }
+
+    function renderParams() {
+      const model = selectedModel();
+      paramsBox.replaceChildren();
+      for (const param of model?.parameters || []) {
+        const label = document.createElement("label");
+        label.textContent = param.displayName;
+        label.htmlFor = "param-" + param.id;
+        const select = document.createElement("select");
+        select.id = "param-" + param.id;
+        select.dataset.param = param.id;
+        for (const entry of param.values) {
+          const option = document.createElement("option");
+          option.value = entry.value;
+          option.textContent = entry.displayName;
+          select.append(option);
+        }
+        const preset = (model.variants || []).find((item) => item.isDefault);
+        const chosen = preset?.params?.find((item) => item.id === param.id);
+        if (chosen) select.value = chosen.value;
+        select.addEventListener("change", refreshCaution);
+        paramsBox.append(label, select);
+      }
+      refreshCaution();
+    }
+
+    function currentSelection() {
+      const params = [...paramsBox.querySelectorAll("select")].map((select) => ({
+        id: select.dataset.param,
+        value: select.value,
+      }));
+      return { id: modelSelect.value, params };
+    }
+
+    function formatModel(model) {
+      if (!model) return "未设置";
+      if (typeof model === "string") return model;
+      const params = (model.params || []).map((item) => item.id + "=" + item.value).join("，");
+      return params ? model.id + "（" + params + "）" : model.id;
+    }
+
+    function skillName(skill) {
+      if (typeof skill === "string") return skill;
+      return skill?.name || skill?.id || "未命名技能";
+    }
+
+    function renderProjects(activeId) {
+      projectSelect.replaceChildren();
+      for (const project of state.projects) {
+        const option = document.createElement("option");
+        option.value = project.id;
+        option.textContent = project.invalid ? `${project.name}（配置无效）` : project.name;
+        if (project.id === activeId) option.selected = true;
+        projectSelect.append(option);
+      }
+      const current = state.projects.find((item) => item.id === activeId);
+      if (current) {
+        projectMeta.textContent =
+          "state-root: " + (current.stateRoot || "") + " · 目录: " + (current.projectDir || "");
+      } else {
+        projectMeta.textContent = "";
+      }
+    }
+
+    async function loadProjects() {
+      const json = await fetch("/api/projects").then((response) => response.json());
+      state.projects = json.projects || [];
+      state.activeProjectId = json.activeId || state.projects[0]?.id || null;
+      renderProjects(state.activeProjectId);
+    }
+
+    async function switchProject(projectId) {
+      if (projectId === state.activeProjectId) return;
+      setStatus("切换项目", "run");
+      showError("");
+      const response = await fetch("/api/project/switch", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: projectId }),
+      });
+      const json = await response.json();
+      if (!response.ok || json.ok === false) throw new Error(json.message || "切换失败");
+      state.activeProjectId = json.project.id;
+      state.sessionId = null;
+      state.continuationToken = null;
+      state.events = [];
+      thread.replaceChildren();
+      clearUsage();
+      renderProjects(state.activeProjectId);
+      await loadMeta();
+      await loadSessions();
+    }
+
+    async function loadMeta() {
+      const [health, catalog] = await Promise.all([
+        fetch("/api/health").then((response) => response.json()),
+        fetch("/api/models").then((response) => response.json()),
+      ]);
+      if (health.project?.id) {
+        state.activeProjectId = health.project.id;
+        renderProjects(state.activeProjectId);
+      }
+      state.models = catalog.models || [];
+      modelSelect.replaceChildren();
+      for (const model of state.models) {
+        const option = document.createElement("option");
+        option.value = model.id;
+        option.textContent = model.displayName;
+        modelSelect.append(option);
+      }
+      const currentId = typeof health.model === "string" ? health.model : health.model?.id;
+      if (currentId && state.models.some((item) => item.id === currentId)) modelSelect.value = currentId;
+      renderParams();
+      if (health.model && typeof health.model !== "string") {
+        for (const param of health.model.params || []) {
+          const select = paramsBox.querySelector(`[data-param="${param.id}"]`);
+          if (select) select.value = param.value;
+        }
+      }
+      const agentName = health.name || health.project?.name || "WebAI";
+      modelLine.textContent = agentName + " · 当前模型：" + formatModel(health.model);
+      skills.replaceChildren();
+      const list = health.skills || [];
+      if (list.length === 0) {
+        const item = document.createElement("li");
+        item.textContent = "还没有登记技能";
+        skills.append(item);
+      } else {
+        for (const skill of list) {
+          const item = document.createElement("li");
+          item.textContent = skillName(skill);
+          skills.append(item);
+        }
+      }
+      if (health.ok) setStatus("空闲", "ok");
+    }
+
+    async function loadSessions() {
+      const response = await fetch("/v1/sessions");
+      const json = await response.json();
+      sessions.replaceChildren();
+      for (const session of json.sessions || []) {
+        const item = document.createElement("li");
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = session.sessionId === state.sessionId ? "active" : "";
+        const when = new Date(session.updatedAt).toLocaleString("zh-CN", { hour12: false });
+        button.textContent = when + " · " + session.turnCount + " 轮";
+        button.addEventListener("click", () => openSession(session.sessionId, session.continuationToken));
+        item.append(button);
+        sessions.append(item);
+      }
+    }
+
+    function renderThread() {
+      thread.replaceChildren();
+      let reply = "";
+      const log = [];
+      for (const event of state.events) {
+        const data = event.data || {};
+        if (event.type === "message.received") {
+          reply = "";
+          addBubble("你", data.text || "", "user");
+        } else if (event.type === "message.appended") {
+          reply = data.text || reply + (data.delta || "");
+        } else if (event.type === "message.completed") {
+          addBubble("WebAI", data.text || reply, "");
+          reply = "";
+        } else if (event.type === "turn.failed" || event.type === "session.failed") {
+          addBubble("失败", explainFailure(data.message), "fail");
+          setStatus("失败", "fail");
+        } else if (event.type === "turn.started") {
+          setStatus("处理中", "run");
+        } else if (event.type === "turn.completed") {
+          setStatus("空闲", "ok");
+          if (data.usage) {
+            const line = document.createElement("p");
+            line.className = "usage";
+            line.textContent = "本轮消耗：" + formatTokenBits(data.usage);
+            thread.append(line);
+          }
+        } else if (event.type === "session.waiting") {
+          setStatus("空闲", "ok");
+        }
+        const line = describeEvent(event);
+        if (line) log.push(line);
+      }
+      if (reply) addBubble("WebAI", reply, "");
+      if (log.length) {
+        const details = document.createElement("details");
+        const summary = document.createElement("summary");
+        summary.textContent = "运行记录";
+        const list = document.createElement("ol");
+        list.className = "log";
+        for (const line of log) {
+          const item = document.createElement("li");
+          item.textContent = line;
+          list.append(item);
+        }
+        details.append(summary, list);
+        thread.append(details);
+      }
+      renderUsage();
+      thread.scrollTop = thread.scrollHeight;
+    }
+
+    function addBubble(who, text, kind) {
+      const bubble = document.createElement("article");
+      bubble.className = "bubble" + (kind ? " " + kind : "");
+      const name = document.createElement("span");
+      name.className = "who";
+      name.textContent = who;
+      bubble.append(name, document.createTextNode(text));
+      thread.append(bubble);
+    }
+
+    async function openSession(sessionId, continuationToken) {
+      state.sessionId = sessionId;
+      state.continuationToken = continuationToken || null;
+      const response = await fetch("/v1/session/" + sessionId + "/events?format=json");
+      const json = await response.json();
+      state.events = json.events || [];
+      state.cost = null;
+      renderThread();
+      await loadSessions();
+      loadCost(sessionId);
+    }
+
+    async function followStream(sessionId, fromIndex) {
+      const response = await fetch("/v1/session/" + sessionId + "/stream?startIndex=" + fromIndex);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let newline = buffer.indexOf("\n");
+        while (newline >= 0) {
+          const line = buffer.slice(0, newline).trim();
+          buffer = buffer.slice(newline + 1);
+          if (line) {
+            const event = JSON.parse(line);
+            state.events.push(event);
+            renderThread();
+            if (event.type === "turn.completed" || event.type === "turn.failed") {
+              const text = event.data?.result || event.data?.message || "";
+              if (text) {
+                fetch("/api/journal", {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify({ role: "assistant", text, sessionId }),
+                });
+              }
+              await loadSessions();
+              loadCost(sessionId);
+              return;
+            }
+          }
+          newline = buffer.indexOf("\n");
+        }
+      }
+    }
+
+    modelSelect.addEventListener("change", renderParams);
+
+    document.querySelector("#apply").addEventListener("click", async () => {
+      showError("");
+      const button = document.querySelector("#apply");
+      button.disabled = true;
+      setStatus("正在切换模型", "wait");
+      try {
+        const response = await fetch("/api/model", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(currentSelection()),
+        });
+        const json = await response.json();
+        if (!response.ok || json.ok === false) throw new Error(json.message || "切换失败");
+        modelLine.textContent = "当前模型：" + formatModel(json.model);
+        setStatus("空闲", "ok");
+      } catch (error) {
+        showError(error.message);
+        setStatus("失败", "fail");
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    projectSelect.addEventListener("change", async () => {
+      const nextId = projectSelect.value;
+      projectSelect.disabled = true;
+      try {
+        await switchProject(nextId);
+      } catch (error) {
+        showError(error.message);
+        setStatus("失败", "fail");
+        renderProjects(state.activeProjectId);
+      } finally {
+        projectSelect.disabled = false;
+      }
+    });
+
+    document.querySelector("#fresh").addEventListener("click", () => {
+      state.sessionId = null;
+      state.continuationToken = null;
+      state.events = [];
+      thread.replaceChildren();
+      clearUsage();
+      setStatus("空闲", "ok");
+      loadSessions();
+    });
+
+    document.querySelector("#composer").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const message = document.querySelector("#message").value.trim();
+      if (!message) return;
+      document.querySelector("#send").disabled = true;
+      document.querySelector("#message").value = "";
+      setStatus("处理中", "run");
+      try {
+        const body = { message };
+        let url = "/v1/session";
+        if (state.sessionId) {
+          url = "/v1/session/" + state.sessionId;
+          body.continuationToken = state.continuationToken;
+        }
+        const response = await fetch(url, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const json = await response.json();
+        if (!response.ok || json.ok === false) throw new Error(json.message || "发送失败");
+        state.sessionId = json.sessionId;
+        state.continuationToken = json.continuationToken;
+        fetch("/api/journal", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ role: "user", text: message, sessionId: json.sessionId }),
+        });
+        if (!state.events.length) state.events = [];
+        await followStream(json.sessionId, state.events.length);
+      } catch (error) {
+        addBubble("失败", explainFailure(error.message), "fail");
+        setStatus("失败", "fail");
+      } finally {
+        document.querySelector("#send").disabled = false;
+      }
+    });
+
+    loadProjects()
+      .then(() => loadMeta())
+      .then(loadSessions)
+      .catch((error) => {
+        showError(error.message);
+        setStatus("失败", "fail");
+      });
+  </script>
+</body>
+</html>
