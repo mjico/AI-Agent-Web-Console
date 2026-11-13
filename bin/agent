@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -u
+BIN="$(cd "$(dirname "$0")" && pwd)"
+REAL="${CURSOR_AGENT_BIN:-}"
+if [[ -z "$REAL" || ! -e "$REAL" ]]; then
+  if [[ -e "$HOME/.local/bin/agent" ]]; then REAL="$HOME/.local/bin/agent"
+  elif [[ -e "$HOME/.local/bin/cursor-agent" ]]; then REAL="$HOME/.local/bin/cursor-agent"
+  elif [[ -e "$HOME/.local/share/cursor-agent/agent" ]]; then REAL="$HOME/.local/share/cursor-agent/agent"
+  else REAL="$(command -v agent || true)"
+  fi
+fi
+if [[ -z "$REAL" || ! -e "$REAL" || "$REAL" -ef "$BIN/agent" ]]; then
+  echo "Cursor CLI not found. Set CURSOR_AGENT_BIN." >&2
+  exit 1
+fi
+launch="${TMPDIR:-/tmp}/webai-launch-$$.txt"
+if ! WEB_AI_LAUNCH="$launch" "$BIN/ensure-console.sh" "$@"; then
+  exit 1
+fi
+mode="plain"
+id=""
+if [[ -f "$launch" ]]; then
+  mode="$(awk -F= '$1=="mode"{print $2}' "$launch")"
+  id="$(awk -F= '$1=="id"{print $2}' "$launch")"
+fi
+rest=()
+if [[ -n "$launch" && -f "$launch.rest" ]]; then
+  while IFS= read -r -d '' item; do rest+=("$item"); done < "$launch.rest"
+fi
+if [[ "$mode" == "resume" && -n "$id" ]]; then
+  if [[ ${#rest[@]} -eq 0 ]]; then
+    exec "$REAL" --resume "$id" --force --trust
+  else
+    exec "$REAL" --resume "$id" --force --trust "${rest[@]}"
+  fi
+fi
+exec "$REAL" --force --trust "$@"

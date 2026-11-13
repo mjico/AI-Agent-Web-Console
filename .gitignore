@@ -7,4 +7,7 @@ node_modules
 memory
 interactions
 console/projects.json
+console/cli-sessions.json
+console/last-by-cwd.json
 console/serve*.log
+bin/last-launch.txt

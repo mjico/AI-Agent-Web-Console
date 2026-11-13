@@ -3,8 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="google" content="notranslate" />
-  <title>WebAI 控制台</title>
+  <title>WebAI</title>
   <style>
     :root {
       color-scheme: light;
@@ -19,8 +18,6 @@
       --ok: #1f7a3a;
       --fail: #9d2430;
       --fail-bg: #fdecef;
-      --wait: #8a5a00;
-      --wait-bg: #fff4d6;
     }
     * { box-sizing: border-box; }
     body {
@@ -32,670 +29,1172 @@
       color: var(--ink);
       background: var(--bg);
     }
-    header {
-      display: flex;
-      align-items: center;
-      gap: 16px;
-      padding: 14px 18px;
-      background: var(--panel);
-      border-bottom: 1px solid var(--line);
-    }
-    header h1 { margin: 0; font-size: 18px; letter-spacing: 0.04em; }
-    header p { margin: 0; color: var(--muted); }
-    .pill {
-      margin-left: auto;
-      padding: 4px 10px;
-      border-radius: 999px;
-      background: #ece7df;
-      color: var(--ink);
-      font-size: 13px;
-    }
+    header, aside { background: var(--panel); }
+    header { display: flex; gap: 16px; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--line); }
+    header h1 { margin: 0; font-size: 18px; }
+    header p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+    .pill { margin-left: auto; padding: 4px 10px; border-radius: 999px; background: #ece7df; font-size: 13px; }
     .pill.run { background: #e5f0fb; color: var(--run); }
     .pill.ok { background: #e5f6ea; color: var(--ok); }
     .pill.fail { background: var(--fail-bg); color: var(--fail); }
-    .pill.wait { background: var(--wait-bg); color: var(--wait); }
-    main { display: grid; grid-template-columns: 320px 1fr; min-height: 0; }
-    aside, section { min-height: 0; }
-    aside {
-      padding: 16px;
-      overflow: auto;
-      border-right: 1px solid var(--line);
-      background: var(--panel);
-    }
+    main { display: grid; grid-template-columns: 300px 1fr; min-height: 0; }
+    aside { padding: 16px; overflow: auto; border-right: 1px solid var(--line); }
     label { display: block; margin: 12px 0 6px; color: var(--muted); font-size: 13px; }
-    select, textarea, button { font: inherit; }
-    select, textarea {
-      width: 100%;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #fff;
-      color: var(--ink);
-      padding: 8px 10px;
-    }
-    button {
-      border: 0;
-      border-radius: 8px;
-      padding: 8px 12px;
-      background: var(--accent);
-      color: var(--accent-ink);
-      cursor: pointer;
-    }
-    button.secondary { background: #ece7df; color: var(--ink); }
+    button, textarea { font: inherit; }
+    button { border: 0; border-radius: 8px; padding: 8px 12px; background: var(--accent); color: var(--accent-ink); cursor: pointer; }
+    button.secondary, .sessions button { background: transparent; color: var(--ink); border: 1px solid transparent; }
     button:disabled { opacity: 0.55; cursor: wait; }
-    .row { display: flex; gap: 8px; margin-top: 12px; }
-    .row button { flex: 1; }
-    .note { margin: 8px 0 0; color: var(--wait); font-size: 13px; }
-    .error { margin: 8px 0 0; color: var(--fail); font-size: 13px; }
     .sessions { list-style: none; margin: 8px 0 0; padding: 0; }
-    .sessions button {
-      width: 100%;
-      margin: 0 0 6px;
-      text-align: left;
-      background: transparent;
-      color: var(--ink);
-      border: 1px solid transparent;
-    }
+    .sessions button { width: 100%; margin: 0 0 6px; text-align: left; }
     .sessions button.active, .sessions button:hover { border-color: var(--line); background: #f7f3ec; }
-    .chat { display: grid; grid-template-rows: 1fr auto; min-height: 0; }
-    .thread { overflow: auto; padding: 18px; }
-    .bubble { max-width: 760px; margin: 0 0 12px; padding: 10px 12px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); }
-    .bubble.user { margin-left: auto; background: #e7f4f3; }
+    .tools { list-style: none; margin: 0; padding: 0; }
+    .tools button, .steps button, .monitor-open { width: 100%; margin: 0 0 6px; text-align: left; background: transparent; color: var(--ink); border: 1px solid transparent; }
+    .tools button:hover, .steps button:hover, .steps button.active, .monitor-open:hover { border-color: var(--line); background: #f7f3ec; }
+    .monitor { position: fixed; inset: 58px 0 0 300px; z-index: 3; display: grid; grid-template-rows: auto 1fr; background: var(--panel); border-left: 1px solid var(--line); }
+    .monitor[hidden] { display: none; }
+    .monitor-bar { display: flex; gap: 12px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+    .monitor-bar .note { flex: 1; }
+    .monitor-body { display: grid; grid-template-columns: 340px 1fr; min-height: 0; }
+    .step-pane { display: grid; grid-template-rows: auto 1fr; min-height: 0; border-right: 1px solid var(--line); }
+    .filters { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+    .filters button { background: transparent; color: var(--ink); border: 1px solid var(--line); padding: 4px 8px; }
+    .filters button.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+    .steps { list-style: none; margin: 0; padding: 12px 12px 12px 18px; overflow: auto; }
+    .steps li { position: relative; margin: 0 0 8px; padding-left: 16px; }
+    .steps li::before { content: ""; position: absolute; left: 0; top: 4px; bottom: -10px; width: 2px; background: var(--line); }
+    .steps li::after { content: ""; position: absolute; left: -3px; top: 12px; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+    .steps li.edit::after { background: var(--accent); }
+    .steps li.shell::after { background: var(--run); }
+    .steps li.skill::after, .steps li.call::after { background: var(--ok); }
+    .steps li.subagent::after { background: #7a4e9d; }
+    .steps li.result::after, .steps li.error::after { background: var(--fail); }
+    .activity { max-width: 760px; margin: 0 0 8px 12px; border-left: 2px solid var(--line); padding-left: 10px; }
+    .activity button.line { width: 100%; text-align: left; background: transparent; color: var(--ink); border: 1px solid transparent; }
+    .activity button.line:hover, .activity.open button.line { border-color: var(--line); background: #f7f3ec; }
+    .activity.edit { border-color: var(--accent); }
+    .activity.shell { border-color: var(--run); }
+    .activity.skill, .activity.call { border-color: var(--ok); }
+    .activity.subagent { border-color: #7a4e9d; }
+    #raw { margin: 0; padding: 16px 18px; overflow: auto; background: var(--bg); color: var(--ink); }
+    .visual-head { margin: 0 0 14px; font-size: 16px; }
+    .field { margin: 0 0 14px; }
+    .field h3, .diff h3 { margin: 8px 0 6px; font-size: 12px; color: var(--muted); font-weight: 600; }
+    .field pre, .diff { margin: 0; white-space: pre-wrap; word-break: break-word; font: 13px/1.45 Consolas, "Cascadia Mono", monospace; }
+    .diff-del, .diff-add { padding: 1px 8px; }
+    .diff-del { background: var(--fail-bg); color: var(--fail); }
+    .diff-add { background: #e5f6ea; color: var(--ok); }
+    .activity .detail { display: none; margin: 6px 0 0; padding: 8px 10px; overflow: auto; max-height: 320px; background: var(--panel); border-radius: 8px; }
+    .activity.open .detail { display: block; }
+    .chat { display: grid; grid-template-rows: auto 1fr auto auto; min-height: 0; }
+    .prompt {
+      display: none;
+      max-height: 28vh;
+      overflow: auto;
+      padding: 12px 18px;
+      border-bottom: 1px solid var(--line);
+      background: #e7f4f3;
+    }
+    .prompt.show { display: block; }
+    .prompt .body { max-width: 760px; white-space: pre-wrap; word-break: break-word; }
+    .thread { overflow: auto; padding: 18px; min-height: 0; }
+    .turn-marker { height: 0; margin: 0; padding: 0; border: 0; overflow: hidden; }
+    .bubble { max-width: 760px; margin: 0 0 12px; padding: 10px 12px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); white-space: pre-wrap; }
+    .bubble.user { margin-left: auto; background: #d9ecea; border-color: #b7d8d5; }
+    .bubble.answer { border-color: #9cc9c6; box-shadow: inset 3px 0 0 var(--accent); }
     .bubble.fail { background: var(--fail-bg); border-color: #f3c2c8; }
     .who { display: block; margin-bottom: 4px; color: var(--muted); font-size: 12px; }
-    .usage { margin: -6px 0 14px; color: var(--muted); font-size: 12px; }
-    #usage-line { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+    .note.turn-end, .note.turn-fail {
+      max-width: 760px;
+      margin: 4px 0 16px;
+      padding: 8px 12px;
+      border-radius: 8px;
+      border: 1px dashed var(--line);
+      background: #f7f3ec;
+      font-weight: 600;
+    }
+    .note.turn-fail { border-color: #f3c2c8; background: var(--fail-bg); color: var(--fail); }
+    .choices { max-height: 42vh; overflow: auto; padding: 12px 18px; border-top: 1px solid var(--line); background: #e7f4f3; }
+    .choices[hidden] { display: none; }
+    .choices h2 { margin: 0; font-size: 15px; color: var(--accent); }
+    .choices .meta, .choices .hint { color: var(--muted); font-size: 12px; }
+    .choices .ask { margin: 8px 0; max-width: 760px; }
+    .choices button.option, .choices .other {
+      display: flex; gap: 8px; align-items: center; width: 100%; max-width: 760px;
+      margin: 0 0 4px; text-align: left; background: transparent; color: var(--ink);
+      border: 1px solid transparent; font-family: Consolas, "Cascadia Mono", monospace;
+    }
+    .choices .other button.option { width: auto; }
+    .choices .other input { flex: 1; font: inherit; color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; }
+    .queue { list-style: none; margin: 0; padding: 8px 18px 0; max-height: 120px; overflow: auto; }
+    .queue[hidden] { display: none; }
+    .queue li { display: flex; gap: 8px; align-items: center; margin: 0 0 4px; }
+    .queue span { flex: 1; overflow: hidden; color: var(--muted); font-size: 13px; white-space: nowrap; text-overflow: ellipsis; }
+    .queue button { background: transparent; color: var(--ink); border: 1px solid var(--line); padding: 2px 8px; }
     .composer { display: grid; grid-template-columns: 1fr auto; gap: 8px; padding: 12px 18px 18px; }
-    textarea { min-height: 72px; resize: vertical; }
-    details { margin-top: 8px; }
-    .log { margin: 8px 0 0; padding: 0; list-style: none; color: var(--muted); font-size: 13px; }
-    .skills { margin: 0; padding-left: 18px; color: var(--muted); }
+    .actions { display: flex; flex-direction: column; gap: 8px; }
+    #send, #cancel { display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 76px; line-height: 1.2; }
+    #send small, #cancel small { font-size: 11px; opacity: 0.85; }
+    #cancel { background: var(--fail); }
+    #cancel[hidden] { display: none; }
+    textarea { width: 100%; min-height: 72px; resize: vertical; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+    .note { color: var(--muted); font-size: 13px; }
   </style>
 </head>
 <body class="notranslate" translate="no">
   <header>
     <div>
-      <h1>WebAI 控制台</h1>
-      <p id="model-line">正在读取当前模型…</p>
-      <p id="usage-line">本会话还没有 token 记录</p>
-      <p class="note" style="margin:4px 0 0;color:var(--muted)">请用本页代替 Playground（<code>:3000</code>），并关闭浏览器的自动翻译。</p>
+      <h1>WebAI</h1>
+      <p id="meta">等待附着到 Cursor CLI 会话</p>
+      <p id="usage" class="note">本会话还没有 token 记录</p>
     </div>
-    <span id="status" class="pill">连接中</span>
+    <span id="status" class="pill">空闲</span>
   </header>
   <main>
     <aside>
-      <label for="project">Agent 项目</label>
-      <select id="project"></select>
-      <p id="project-meta" class="note" style="color:var(--muted);margin-top:4px"></p>
-      <label for="model">模型</label>
-      <select id="model"></select>
-      <div id="params"></div>
-      <p id="caution" class="note" hidden></p>
-      <p id="form-error" class="error" hidden></p>
-      <div class="row">
-        <button id="apply" type="button">应用模型</button>
-      </div>
-      <label>可用技能</label>
-      <ul id="skills" class="skills"></ul>
-      <label>历史会话</label>
-      <div class="row">
-        <button id="fresh" class="secondary" type="button">新对话</button>
-      </div>
+      <label>监控</label>
+      <button type="button" id="open-monitor" class="monitor-open">打开监控</button>
+      <p id="tool" class="note">当前没有工具调用</p>
+      <ul id="tools" class="tools"></ul>
+      <p id="sync" class="note"></p>
+      <label>附着过的会话</label>
       <ul id="sessions" class="sessions"></ul>
     </aside>
     <section class="chat">
+      <div id="prompt" class="prompt" aria-live="polite">
+        <span class="who">你</span>
+        <div id="prompt-text" class="body"></div>
+      </div>
       <div id="thread" class="thread"></div>
+      <div id="choices" class="choices" hidden tabindex="0"></div>
+      <ul id="queue" class="queue" hidden></ul>
       <form id="composer" class="composer">
-        <textarea id="message" placeholder="输入要交给 WebAI 的内容"></textarea>
-        <button id="send" type="submit">发送</button>
+        <textarea id="message" placeholder="发给当前这条 CLI 会话，Alt+S 发送。这条会话正忙时会进入队列。光标在首行或末行时，用上下键翻历史"></textarea>
+        <div class="actions">
+          <button id="send" type="submit">发送<small>Alt+S</small></button>
+          <button id="cancel" type="button" hidden>终止<small>Esc</small></button>
+        </div>
       </form>
     </section>
   </main>
+  <section id="monitor" class="monitor" hidden>
+    <div class="monitor-bar">
+      <strong>监控</strong>
+      <span class="note">最近步骤按时间排开。点一步查看文件、命令和改动。</span>
+      <button type="button" id="close-monitor" class="secondary">关闭</button>
+    </div>
+    <div class="monitor-body">
+      <div class="step-pane">
+        <div id="filters" class="filters"></div>
+        <ul id="steps" class="steps"></ul>
+      </div>
+      <div id="raw">点左侧一步，查看这一步做了什么。</div>
+    </div>
+  </section>
   <script>
-    const EVENT_LABELS = {
-      "session.started": "新会话",
-      "session.waiting": "可以发下一条了",
-      "session.completed": "会话结束",
-      "session.failed": "会话出错",
-      "message.received": "收到你的消息",
-      "turn.queued": "排队等待处理",
-      "turn.started": "正在处理",
-      "turn.completed": "这一轮结束",
-      "turn.failed": "这一轮失败",
-      "step.started": "模型在想下一步",
-      "step.completed": "这一步结束",
-      "reasoning.completed": "思考结束",
-      "message.completed": "生成了一段回复",
-      "actions.requested": "正在调用工具",
-      "actions.completed": "工具调用结束",
-      "action.result": "某个工具返回了结果",
-      "action.approval_requested": "需要你点允许",
-      "action.approval_resolved": "授权已处理",
-      "action.auth_requested": "需要连接外部账号",
-      "action.auth_resolved": "账号已连接",
-      "action.tool_retry": "工具失败，正在重试",
-      "subagent.called": "派生子任务",
-      "subagent.completed": "子任务结束",
-      "nudge.delivered": "发送了提醒",
-    };
-
-    const TOOL_LABELS = {
-      Shell: "运行命令",
-      Grep: "搜索文件内容",
-      Glob: "按文件名查找",
-      Read: "读取文件",
-      Write: "写入文件",
-      StrReplace: "修改文件",
-      GetDynamicTools: "查看可用工具",
-      CallDynamicTool: "调用扩展工具",
-      Task: "启动子代理",
-    };
-
-    const LOG_SKIP = new Set([
-      "agent.bound",
-      "turn.bound",
-      "reasoning.appended",
-      "message.appended",
-      "action.result",
-      "artifact.tagged",
-      "action.effect_unclassified",
-    ]);
-
+    const params = new URLSearchParams(location.search);
     const state = {
-      models: [],
-      projects: [],
-      activeProjectId: null,
-      sessionId: null,
-      continuationToken: null,
-      events: [],
-      cost: null,
-      draft: "",
+      chatId: params.get("chat") || "",
+      cwd: "",
+      running: false,
+      steps: [],
+      selectedStep: 0,
+      filter: "all",
+      pendingQuestion: "",
+      inputHistory: [],
+      historyCursor: -1,
+      historyDraft: "",
+      choice: null,
+      choiceQuestion: 0,
+      choiceOption: 0,
+      choiceSelected: {},
+      choiceFreeform: {},
+      dismissedChoiceId: "",
+      queues: {},
+      remoteRunning: false,
     };
+    const OTHER = "__other__";
 
-    const usageLine = document.querySelector("#usage-line");
-
-    const projectSelect = document.querySelector("#project");
-    const projectMeta = document.querySelector("#project-meta");
-    const modelSelect = document.querySelector("#model");
-    const paramsBox = document.querySelector("#params");
-    const caution = document.querySelector("#caution");
-    const formError = document.querySelector("#form-error");
+    const meta = document.querySelector("#meta");
+    const usage = document.querySelector("#usage");
     const statusPill = document.querySelector("#status");
-    const modelLine = document.querySelector("#model-line");
-    const thread = document.querySelector("#thread");
+    const toolLine = document.querySelector("#tool");
+    const tools = document.querySelector("#tools");
+    const monitor = document.querySelector("#monitor");
+    const stepList = document.querySelector("#steps");
+    const filters = document.querySelector("#filters");
+    const rawView = document.querySelector("#raw");
+    const syncLine = document.querySelector("#sync");
     const sessions = document.querySelector("#sessions");
-    const skills = document.querySelector("#skills");
+    const promptBox = document.querySelector("#prompt");
+    const promptText = document.querySelector("#prompt-text");
+    const thread = document.querySelector("#thread");
 
-    function formatCount(value) {
-      const n = Number(value) || 0;
-      return n.toLocaleString("zh-CN");
+    function setPrompt(text) {
+      const value = String(text || "").trim();
+      promptText.textContent = value;
+      promptBox.classList.toggle("show", Boolean(value));
     }
 
-    function sumUsage(events) {
-      const total = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, turns: 0 };
-      for (const event of events || []) {
-        const usage = event.type === "turn.completed" ? event.data?.usage : null;
-        if (!usage) continue;
-        total.turns += 1;
-        total.inputTokens += Number(usage.inputTokens) || 0;
-        total.outputTokens += Number(usage.outputTokens) || 0;
-        total.cacheReadTokens += Number(usage.cacheReadTokens) || 0;
-        total.cacheWriteTokens += Number(usage.cacheWriteTokens) || 0;
-      }
-      return total;
+    function addTurnMarker(question) {
+      const marker = document.createElement("div");
+      marker.className = "turn-marker";
+      marker.dataset.question = String(question || "");
+      thread.append(marker);
+      return marker;
     }
 
-    function formatTokenBits(usage) {
-      const parts = [
-        "输入 " + formatCount(usage.inputTokens),
-        "输出 " + formatCount(usage.outputTokens),
-      ];
-      if (usage.cacheReadTokens) parts.push("缓存读取 " + formatCount(usage.cacheReadTokens));
-      if (usage.cacheWriteTokens) parts.push("缓存写入 " + formatCount(usage.cacheWriteTokens));
-      const total = (Number(usage.inputTokens) || 0) + (Number(usage.outputTokens) || 0);
-      parts.push("合计 " + formatCount(total));
-      return parts.join(" · ");
-    }
-
-    function formatUsd(value) {
-      const n = Number(value);
-      if (!Number.isFinite(n) || n <= 0) return "";
-      return "费用约 $" + n.toLocaleString("zh-CN", { minimumFractionDigits: 4, maximumFractionDigits: 4 });
-    }
-
-    function renderUsage() {
-      const total = sumUsage(state.events);
-      if (!state.sessionId || total.turns === 0) {
-        usageLine.textContent = "本会话还没有 token 记录";
+    function syncPromptFromScroll() {
+      const markers = [...thread.querySelectorAll(".turn-marker")];
+      if (!markers.length) return;
+      const distanceFromBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight;
+      if (distanceFromBottom <= 32) {
+        setPrompt(markers[markers.length - 1].dataset.question || "");
         return;
       }
-      const bits = [total.turns + " 轮", formatTokenBits(total)];
-      const price = formatUsd(state.cost?.costUsd);
-      if (price) bits.push(price);
-      usageLine.textContent = "本会话：" + bits.join(" · ");
-    }
-
-    function clearUsage() {
-      state.cost = null;
-      renderUsage();
-    }
-
-    async function loadCost(sessionId) {
-      if (!sessionId || sessionId !== state.sessionId) return;
-      try {
-        const response = await fetch("/v1/session/" + sessionId + "/cost");
-        if (!response.ok || sessionId !== state.sessionId) return;
-        state.cost = await response.json();
-        renderUsage();
-      } catch {
-        /* 费用接口失败时仍显示 token 计数 */
+      const line = thread.scrollTop + 12;
+      let current = markers[0];
+      for (const marker of markers) {
+        if (marker.offsetTop <= line) current = marker;
+        else break;
       }
+      setPrompt(current.dataset.question || "");
     }
 
     function setStatus(text, kind) {
       statusPill.textContent = text;
       statusPill.className = "pill" + (kind ? " " + kind : "");
+      const cancel = document.querySelector("#cancel");
+      if (cancel) cancel.hidden = !(state.running || state.remoteRunning);
     }
 
-    function showError(text) {
-      formError.hidden = !text;
-      formError.textContent = text || "";
+    function formatCount(value) {
+      return (Number(value) || 0).toLocaleString("zh-CN");
     }
 
-    function selectedModel() {
-      return state.models.find((item) => item.id === modelSelect.value);
+    function formatDuration(ms) {
+      if (ms == null || ms === "") return "无逐步耗时";
+      const value = Number(ms);
+      if (!Number.isFinite(value)) return "无逐步耗时";
+      if (value < 1000) return Math.round(value) + " 毫秒";
+      const seconds = value / 1000;
+      return (seconds < 10 ? seconds.toFixed(1) : Math.round(seconds).toLocaleString("zh-CN")) + " 秒";
     }
 
-    function describeEvent(event) {
-      if (LOG_SKIP.has(event.type)) return null;
-      if (event.type === "message.completed") {
-        if (event.data?.finishReason === "tool_call") return "准备调用工具";
-        if (event.data?.finishReason === "stop") return null;
+    const fieldLabels = {
+      path: "文件",
+      file_path: "文件",
+      target_directory: "目录",
+      command: "命令",
+      description: "说明",
+      pattern: "条件",
+      glob_pattern: "匹配",
+      old_string: "原来的内容",
+      new_string: "改成",
+      contents: "写入内容",
+      namespace: "来源",
+      toolName: "名称",
+      arguments: "参数",
+      prompt: "任务",
+      subagent_type: "类型",
+      limit: "范围",
+      offset: "起始行",
+      head_limit: "最多几条",
+      working_directory: "工作目录",
+    };
+
+    function stepPayload(step) {
+      if (!step || !step.raw) return null;
+      try {
+        return JSON.parse(step.raw);
+      } catch {
+        return null;
       }
-      if (event.type === "actions.requested") {
-        const names = [...new Set((event.data?.calls || []).map((call) => TOOL_LABELS[call.toolName] || call.toolName))];
-        return names.length ? "调用工具：" + names.join("、") : EVENT_LABELS[event.type];
-      }
-      if (event.type === "turn.completed" && event.data?.usage) {
-        return "这一轮结束 · " + formatTokenBits(event.data.usage);
-      }
-      return EVENT_LABELS[event.type] || null;
     }
 
-    function explainFailure(message) {
-      const text = message || "这一轮没有完成。";
-      if (/team admin/i.test(text) || text.includes("模型被封锁") || text.includes("Model Blocked")) {
-        return "这个模型或这组参数已被团队管理员拦截。请换一个模型，或把「快速模式」关掉，再点一次「应用模型」。";
-      }
-      return text;
-    }
-
-    function refreshCaution() {
-      const model = selectedModel();
-      const notes = [];
-      if (model?.caution) notes.push(model.caution);
-      const fast = paramsBox.querySelector('[data-param="fast"]');
-      if (fast?.value === "true") notes.push("快速模式打开时，团队管理员可能拦截这个组合。");
-      caution.hidden = notes.length === 0;
-      caution.textContent = notes.join(" ");
-    }
-
-    function renderParams() {
-      const model = selectedModel();
-      paramsBox.replaceChildren();
-      for (const param of model?.parameters || []) {
-        const label = document.createElement("label");
-        label.textContent = param.displayName;
-        label.htmlFor = "param-" + param.id;
-        const select = document.createElement("select");
-        select.id = "param-" + param.id;
-        select.dataset.param = param.id;
-        for (const entry of param.values) {
-          const option = document.createElement("option");
-          option.value = entry.value;
-          option.textContent = entry.displayName;
-          select.append(option);
-        }
-        const preset = (model.variants || []).find((item) => item.isDefault);
-        const chosen = preset?.params?.find((item) => item.id === param.id);
-        if (chosen) select.value = chosen.value;
-        select.addEventListener("change", refreshCaution);
-        paramsBox.append(label, select);
-      }
-      refreshCaution();
-    }
-
-    function currentSelection() {
-      const params = [...paramsBox.querySelectorAll("select")].map((select) => ({
-        id: select.dataset.param,
-        value: select.value,
-      }));
-      return { id: modelSelect.value, params };
-    }
-
-    function formatModel(model) {
-      if (!model) return "未设置";
-      if (typeof model === "string") return model;
-      const params = (model.params || []).map((item) => item.id + "=" + item.value).join("，");
-      return params ? model.id + "（" + params + "）" : model.id;
-    }
-
-    function skillName(skill) {
-      if (typeof skill === "string") return skill;
-      return skill?.name || skill?.id || "未命名技能";
-    }
-
-    function renderProjects(activeId) {
-      projectSelect.replaceChildren();
-      for (const project of state.projects) {
-        const option = document.createElement("option");
-        option.value = project.id;
-        option.textContent = project.invalid ? `${project.name}（配置无效）` : project.name;
-        if (project.id === activeId) option.selected = true;
-        projectSelect.append(option);
-      }
-      const current = state.projects.find((item) => item.id === activeId);
-      if (current) {
-        projectMeta.textContent =
-          "state-root: " + (current.stateRoot || "") + " · 目录: " + (current.projectDir || "");
+    function addField(container, label, value) {
+      if (value == null || value === "") return;
+      const block = document.createElement("section");
+      block.className = "field";
+      const title = document.createElement("h3");
+      title.textContent = label;
+      block.append(title);
+      if (typeof value === "object") {
+        const keys = Object.keys(value);
+        if (!keys.length) return;
+        for (const key of keys) addField(block, fieldLabels[key] || key, value[key]);
       } else {
-        projectMeta.textContent = "";
+        const body = document.createElement("pre");
+        body.textContent = String(value);
+        block.append(body);
       }
+      container.append(block);
     }
 
-    async function loadProjects() {
-      const json = await fetch("/api/projects").then((response) => response.json());
-      state.projects = json.projects || [];
-      state.activeProjectId = json.activeId || state.projects[0]?.id || null;
-      renderProjects(state.activeProjectId);
-    }
-
-    async function switchProject(projectId) {
-      if (projectId === state.activeProjectId) return;
-      setStatus("切换项目", "run");
-      showError("");
-      const response = await fetch("/api/project/switch", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ id: projectId }),
-      });
-      const json = await response.json();
-      if (!response.ok || json.ok === false) throw new Error(json.message || "切换失败");
-      state.activeProjectId = json.project.id;
-      state.sessionId = null;
-      state.continuationToken = null;
-      state.events = [];
-      thread.replaceChildren();
-      clearUsage();
-      renderProjects(state.activeProjectId);
-      await loadMeta();
-      await loadSessions();
-    }
-
-    async function loadMeta() {
-      const [health, catalog] = await Promise.all([
-        fetch("/api/health").then((response) => response.json()),
-        fetch("/api/models").then((response) => response.json()),
-      ]);
-      if (health.project?.id) {
-        state.activeProjectId = health.project.id;
-        renderProjects(state.activeProjectId);
-      }
-      state.models = catalog.models || [];
-      modelSelect.replaceChildren();
-      for (const model of state.models) {
-        const option = document.createElement("option");
-        option.value = model.id;
-        option.textContent = model.displayName;
-        modelSelect.append(option);
-      }
-      const currentId = typeof health.model === "string" ? health.model : health.model?.id;
-      if (currentId && state.models.some((item) => item.id === currentId)) modelSelect.value = currentId;
-      renderParams();
-      if (health.model && typeof health.model !== "string") {
-        for (const param of health.model.params || []) {
-          const select = paramsBox.querySelector(`[data-param="${param.id}"]`);
-          if (select) select.value = param.value;
+    function addDiff(container, before, after) {
+      if (!before && !after) return;
+      const wrap = document.createElement("div");
+      wrap.className = "diff";
+      if (before) {
+        const title = document.createElement("h3");
+        title.textContent = "删去";
+        wrap.append(title);
+        for (const line of String(before).split("\n")) {
+          const row = document.createElement("div");
+          row.className = "diff-del";
+          row.textContent = "- " + line;
+          wrap.append(row);
         }
       }
-      const agentName = health.name || health.project?.name || "WebAI";
-      modelLine.textContent = agentName + " · 当前模型：" + formatModel(health.model);
-      skills.replaceChildren();
-      const list = health.skills || [];
-      if (list.length === 0) {
-        const item = document.createElement("li");
-        item.textContent = "还没有登记技能";
-        skills.append(item);
-      } else {
-        for (const skill of list) {
-          const item = document.createElement("li");
-          item.textContent = skillName(skill);
-          skills.append(item);
+      if (after) {
+        const title = document.createElement("h3");
+        title.textContent = "写成";
+        wrap.append(title);
+        for (const line of String(after).split("\n")) {
+          const row = document.createElement("div");
+          row.className = "diff-add";
+          row.textContent = "+ " + line;
+          wrap.append(row);
         }
       }
-      if (health.ok) setStatus("空闲", "ok");
+      container.append(wrap);
     }
 
-    async function loadSessions() {
-      const response = await fetch("/v1/sessions");
-      const json = await response.json();
-      sessions.replaceChildren();
-      for (const session of json.sessions || []) {
+    function showRaw(step) {
+      rawView.replaceChildren();
+      if (!step) {
+        rawView.textContent = "点左侧一步，查看这一步做了什么。";
+        return;
+      }
+      renderStepView(rawView, step);
+    }
+
+    function renderStepView(container, step) {
+      container.replaceChildren();
+      const head = document.createElement("h2");
+      head.className = "visual-head";
+      const flag = step.status === "running" ? "进行中" : step.status === "error" ? "失败" : "完成";
+      head.textContent = [step.label || step.name || "步骤", step.title || "", step.stat || "", flag, formatDuration(step.durationMs)].filter(Boolean).join("  ·  ");
+      container.append(head);
+      const parsed = stepPayload(step);
+      const input = parsed && parsed.input && typeof parsed.input === "object" ? parsed.input : parsed;
+      if (input && (input.old_string || input.new_string)) addDiff(container, input.old_string, input.new_string);
+      const skip = new Set(["old_string", "new_string", "name"]);
+      if (input && typeof input === "object") {
+        for (const key of Object.keys(input)) {
+          if (skip.has(key)) continue;
+          addField(container, fieldLabels[key] || key, input[key]);
+        }
+      } else if (step.detail) {
+        addField(container, "内容", step.detail);
+      } else if (step.raw) {
+        addField(container, "内容", step.raw);
+      }
+      if (!container.children.length || container.children.length === 1 && !step.detail && !parsed) {
+        const empty = document.createElement("p");
+        empty.className = "note";
+        empty.textContent = "这一步没有更多内容。";
+        container.append(empty);
+      }
+    }
+
+    const stepFilters = [
+      ["all", "全部"],
+      ["edit", "修改"],
+      ["shell", "命令"],
+      ["read", "读取"],
+      ["search", "搜索"],
+      ["skill", "技能"],
+      ["call", "调用"],
+      ["subagent", "子代理"],
+    ];
+
+    function renderFilters() {
+      const counts = {};
+      for (const step of state.steps || []) counts[step.kind] = (counts[step.kind] || 0) + 1;
+      filters.replaceChildren();
+      for (const [id, label] of stepFilters) {
+        const count = id === "all" ? (state.steps || []).length : (counts[id] || 0);
+        if (id !== "all" && id !== "edit" && !count) continue;
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = count ? label + " " + count : label;
+        if ((state.filter || "all") === id) button.className = "active";
+        button.addEventListener("click", () => {
+          state.filter = id;
+          const matches = (state.steps || []).map((step, index) => ({ step, index })).filter((item) => id === "all" || item.step.kind === id);
+          if (matches.length && !matches.some((item) => item.index === state.selectedStep)) {
+            state.selectedStep = matches[matches.length - 1].index;
+          }
+          renderSteps();
+        });
+        filters.append(button);
+      }
+    }
+
+    function renderSteps() {
+      renderFilters();
+      stepList.replaceChildren();
+      const list = state.steps || [];
+      const visible = list.map((step, index) => ({ step, index })).filter((item) => !state.filter || state.filter === "all" || item.step.kind === state.filter);
+      if (!list.length || !visible.length) {
+        const empty = document.createElement("li");
+        empty.className = "note";
+        empty.textContent = list.length ? "没有这种步骤" : "还没有步骤";
+        stepList.append(empty);
+        rawView.replaceChildren();
+        rawView.textContent = list.length ? "换一个类型，或查看全部步骤。" : "点左侧一步，查看这一步做了什么。";
+        return;
+      }
+      if (!visible.some((item) => item.index === state.selectedStep)) state.selectedStep = visible[visible.length - 1].index;
+      visible.forEach(({ step, index }) => {
         const item = document.createElement("li");
         const button = document.createElement("button");
         button.type = "button";
-        button.className = session.sessionId === state.sessionId ? "active" : "";
-        const when = new Date(session.updatedAt).toLocaleString("zh-CN", { hour12: false });
-        button.textContent = when + " · " + session.turnCount + " 轮";
-        button.addEventListener("click", () => openSession(session.sessionId, session.continuationToken));
+        if (index === state.selectedStep) button.className = "active";
+        const flag = step.status === "running" ? "进行中" : step.status === "error" ? "失败" : "完成";
+        button.textContent = [step.label || step.name, step.title || "", step.stat || "", flag, formatDuration(step.durationMs)].filter(Boolean).join("  ·  ");
+        item.className = step.kind || "";
+        button.addEventListener("click", () => {
+          state.selectedStep = index;
+          renderSteps();
+        });
         item.append(button);
-        sessions.append(item);
-      }
+        stepList.append(item);
+      });
+      showRaw(list[state.selectedStep]);
     }
 
-    function renderThread() {
-      thread.replaceChildren();
-      let reply = "";
-      const log = [];
-      for (const event of state.events) {
-        const data = event.data || {};
-        if (event.type === "message.received") {
-          reply = "";
-          addBubble("你", data.text || "", "user");
-        } else if (event.type === "message.appended") {
-          reply = data.text || reply + (data.delta || "");
-        } else if (event.type === "message.completed") {
-          addBubble("WebAI", data.text || reply, "");
-          reply = "";
-        } else if (event.type === "turn.failed" || event.type === "session.failed") {
-          addBubble("失败", explainFailure(data.message), "fail");
-          setStatus("失败", "fail");
-        } else if (event.type === "turn.started") {
-          setStatus("处理中", "run");
-        } else if (event.type === "turn.completed") {
-          setStatus("空闲", "ok");
-          if (data.usage) {
-            const line = document.createElement("p");
-            line.className = "usage";
-            line.textContent = "本轮消耗：" + formatTokenBits(data.usage);
-            thread.append(line);
-          }
-        } else if (event.type === "session.waiting") {
-          setStatus("空闲", "ok");
-        }
-        const line = describeEvent(event);
-        if (line) log.push(line);
+    function openMonitor(index) {
+      if (typeof index === "number") {
+        state.selectedStep = index;
+        const step = (state.steps || [])[index];
+        if (step && state.filter !== "all" && step.kind !== state.filter) state.filter = "all";
       }
-      if (reply) addBubble("WebAI", reply, "");
-      if (log.length) {
-        const details = document.createElement("details");
-        const summary = document.createElement("summary");
-        summary.textContent = "运行记录";
-        const list = document.createElement("ol");
-        list.className = "log";
-        for (const line of log) {
-          const item = document.createElement("li");
-          item.textContent = line;
-          list.append(item);
-        }
-        details.append(summary, list);
-        thread.append(details);
+      monitor.hidden = false;
+      renderSteps();
+    }
+
+    function rememberStep(step) {
+      if (!step) return;
+      const list = state.steps || [];
+      const at = list.findIndex((item) => item.id === step.id);
+      if (at >= 0) list[at] = step;
+      else list.push(step);
+      state.steps = list.slice(-40);
+      renderToolButtons();
+      if (!monitor.hidden) renderSteps();
+    }
+
+    function renderToolButtons() {
+      tools.replaceChildren();
+      const list = state.steps || [];
+      const recent = list.slice(-6);
+      if (!recent.length) return;
+      recent.forEach((step) => {
+        const item = document.createElement("li");
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = (step.label || step.name) + " · " + (step.title || formatDuration(step.durationMs));
+        button.addEventListener("click", () => openMonitor(list.indexOf(step)));
+        item.append(button);
+        tools.append(item);
+      });
+    }
+
+    function renderUsage(total) {
+      if (!total || !total.turns) {
+        usage.textContent = "本会话还没有 token 记录";
+        return;
       }
-      renderUsage();
+      const sum = (Number(total.inputTokens) || 0) + (Number(total.outputTokens) || 0);
+      const parts = [
+        total.turns + " 轮",
+        "输入 " + formatCount(total.inputTokens),
+        "输出 " + formatCount(total.outputTokens),
+      ];
+      if (total.cacheReadTokens) parts.push("缓存读取 " + formatCount(total.cacheReadTokens));
+      if (total.cacheWriteTokens) parts.push("缓存写入 " + formatCount(total.cacheWriteTokens));
+      parts.push("合计 " + formatCount(sum));
+      usage.textContent = "本会话：" + parts.join(" · ");
+    }
+
+    function lastAnswerBubble() {
+      const kids = [...thread.children];
+      let afterTool = -1;
+      kids.forEach((node, index) => {
+        if (node.classList && node.classList.contains("activity")) afterTool = index;
+      });
+      for (let index = kids.length - 1; index > afterTool; index -= 1) {
+        const node = kids[index];
+        if (!node.classList || !node.classList.contains("bubble")) continue;
+        if (node.querySelector(".who")?.textContent !== "Cursor") continue;
+        return node;
+      }
+      return null;
+    }
+
+    function absorbAssistant(text, fresh) {
+      const bubble = lastAnswerBubble();
+      const target = bubble ? bubble.lastElementChild : null;
+      if (!target || fresh) {
+        addBubble("Cursor", text, "answer");
+      } else if (text.startsWith(target.textContent)) {
+        target.textContent = text;
+        bubble.classList.add("answer");
+      } else if (!target.textContent.startsWith(text)) {
+        target.textContent += text;
+        bubble.classList.add("answer");
+      }
       thread.scrollTop = thread.scrollHeight;
     }
 
     function addBubble(who, text, kind) {
+      if (who === "你" || kind === "user") {
+        addTurnMarker(text);
+        setPrompt(text);
+      }
       const bubble = document.createElement("article");
       bubble.className = "bubble" + (kind ? " " + kind : "");
       const name = document.createElement("span");
       name.className = "who";
       name.textContent = who;
-      bubble.append(name, document.createTextNode(text));
+      const body = document.createElement("span");
+      body.textContent = text;
+      bubble.append(name, body);
       thread.append(bubble);
+      return body;
     }
 
-    async function openSession(sessionId, continuationToken) {
-      state.sessionId = sessionId;
-      state.continuationToken = continuationToken || null;
-      const response = await fetch("/v1/session/" + sessionId + "/events?format=json");
-      const json = await response.json();
-      state.events = json.events || [];
-      state.cost = null;
-      renderThread();
-      await loadSessions();
-      loadCost(sessionId);
-    }
-
-    async function followStream(sessionId, fromIndex) {
-      const response = await fetch("/v1/session/" + sessionId + "/stream?startIndex=" + fromIndex);
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        let newline = buffer.indexOf("\n");
-        while (newline >= 0) {
-          const line = buffer.slice(0, newline).trim();
-          buffer = buffer.slice(newline + 1);
-          if (line) {
-            const event = JSON.parse(line);
-            state.events.push(event);
-            renderThread();
-            if (event.type === "turn.completed" || event.type === "turn.failed") {
-              const text = event.data?.result || event.data?.message || "";
-              if (text) {
-                fetch("/api/journal", {
-                  method: "POST",
-                  headers: { "content-type": "application/json" },
-                  body: JSON.stringify({ role: "assistant", text, sessionId }),
-                });
-              }
-              await loadSessions();
-              loadCost(sessionId);
-              return;
-            }
-          }
-          newline = buffer.indexOf("\n");
-        }
-      }
-    }
-
-    modelSelect.addEventListener("change", renderParams);
-
-    document.querySelector("#apply").addEventListener("click", async () => {
-      showError("");
-      const button = document.querySelector("#apply");
-      button.disabled = true;
-      setStatus("正在切换模型", "wait");
-      try {
-        const response = await fetch("/api/model", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(currentSelection()),
-        });
-        const json = await response.json();
-        if (!response.ok || json.ok === false) throw new Error(json.message || "切换失败");
-        modelLine.textContent = "当前模型：" + formatModel(json.model);
-        setStatus("空闲", "ok");
-      } catch (error) {
-        showError(error.message);
-        setStatus("失败", "fail");
-      } finally {
-        button.disabled = false;
-      }
-    });
-
-    projectSelect.addEventListener("change", async () => {
-      const nextId = projectSelect.value;
-      projectSelect.disabled = true;
-      try {
-        await switchProject(nextId);
-      } catch (error) {
-        showError(error.message);
-        setStatus("失败", "fail");
-        renderProjects(state.activeProjectId);
-      } finally {
-        projectSelect.disabled = false;
-      }
-    });
-
-    document.querySelector("#fresh").addEventListener("click", () => {
-      state.sessionId = null;
-      state.continuationToken = null;
-      state.events = [];
+    function renderSnapshot(data) {
+      state.cwd = data.cwd || state.cwd;
+      meta.textContent = (data.cwd || "未设置工作目录") + " · " + (data.chatId || "无会话") + (data.model ? " · " + data.model : "");
+      state.remoteRunning = Boolean(data.running);
+      const statusText = data.status === "running" || data.running ? "处理中" : data.status === "failed" ? "失败" : "空闲";
+      setStatus(statusText, data.status === "failed" ? "fail" : data.status === "running" || data.running ? "run" : "ok");
+      toolLine.textContent = data.tool ? "正在调用：" + data.tool : "当前没有工具调用";
+      if (!state.running) state.steps = data.steps || [];
+      renderToolButtons();
+      if (!monitor.hidden) renderSteps();
+      syncLine.textContent = data.terminalSync === "missing" ? "终端进度尚未同步" : (data.note || "");
+      renderUsage(data.usage);
+      const entries = data.entries && data.entries.length ? data.entries : (data.messages || []).map((message) => ({ type: message.role, text: message.text }));
+      const viewKey = [
+        data.status,
+        data.tool || "",
+        data.omitted || 0,
+        ...entries.map((entry) => [entry.type, entry.id || "", entry.title || "", entry.text || "", entry.detail || ""].join("\n")),
+      ].join("\u0001");
+      if (state.running || viewKey === state.viewKey) return;
+      state.viewKey = viewKey;
       thread.replaceChildren();
-      clearUsage();
-      setStatus("空闲", "ok");
-      loadSessions();
+      if (data.omitted) {
+        const older = document.createElement("p");
+        older.className = "note";
+        older.textContent = "只显示最近几轮。更早的 " + data.omitted + " 条对话没有加载。";
+        thread.append(older);
+      }
+      let lastQuestion = "";
+      for (let index = 0; index < entries.length; index += 1) {
+        const entry = entries[index];
+        if (entry.type === "tool" || entry.type === "step") addActivity(entry);
+        else if (entry.type === "note") {
+          const note = document.createElement("p");
+          note.className = "note" + (entry.kind === "turn-end" || entry.kind === "turn-fail" ? " " + entry.kind : "");
+          note.textContent = entry.text || "";
+          thread.append(note);
+        } else {
+          const failed = entry.type === "error";
+          const isUser = entry.type === "user";
+          if (isUser) lastQuestion = entry.text || "";
+          const isAnswer = entry.type === "assistant" && !entries.slice(index + 1).some((item) => (
+            item.type === "assistant" || item.type === "tool" || item.type === "step" || item.type === "user"
+          ));
+          addBubble(
+            failed ? "失败" : isUser ? "你" : "Cursor",
+            entry.text || "",
+            failed ? "fail" : isUser ? "user" : isAnswer ? "answer" : "",
+          );
+        }
+      }
+      syncInputHistory(entries);
+      const pending = state.pendingQuestion.trim();
+      if (pending) {
+        const lastUser = [...entries].reverse().find((entry) => entry.type === "user");
+        const shown = String(lastUser && lastUser.text || "").trim();
+        const clipped = shown.replace(/\n…（已截断）$/, "");
+        const kept = shown === pending || shown.startsWith(pending) || (shown !== clipped && pending.startsWith(clipped));
+        if (kept) state.pendingQuestion = "";
+        else {
+          addBubble("你", state.pendingQuestion, "user");
+          lastQuestion = state.pendingQuestion;
+        }
+      }
+      setPrompt(lastQuestion);
+      thread.scrollTop = thread.scrollHeight;
+      syncPromptFromScroll();
+      if (data.pendingChoice) showChoice(data.pendingChoice);
+    }
+
+    function addActivity(step) {
+      const row = document.createElement("div");
+      row.className = "activity " + (step.kind || "tool");
+      if (step.id) row.dataset.step = step.id;
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "line";
+      const flag = step.status === "running" ? "进行中" : step.status === "error" ? "失败" : "";
+      button.textContent = [step.label || step.name || "步骤", step.title || "", step.stat || "", flag, formatDuration(step.durationMs)].filter(Boolean).join("  ·  ");
+      const detail = document.createElement("div");
+      detail.className = "detail";
+      renderStepView(detail, step);
+      button.addEventListener("click", () => row.classList.toggle("open"));
+      row.append(button, detail);
+      thread.append(row);
+      return row;
+    }
+
+    function upsertActivity(step) {
+      if (!step || step.kind === "thinking") return;
+      const existing = step.id ? thread.querySelector("[data-step='" + step.id.replace(/'/g, "") + "']") : null;
+      if (!existing) {
+        addActivity(step);
+        thread.scrollTop = thread.scrollHeight;
+        return;
+      }
+      existing.className = "activity " + (step.kind || "tool") + (existing.classList.contains("open") ? " open" : "");
+      const button = existing.querySelector("button");
+      const flag = step.status === "running" ? "进行中" : step.status === "error" ? "失败" : "";
+      button.textContent = [step.label || step.name || "步骤", step.title || "", step.stat || "", flag, formatDuration(step.durationMs)].filter(Boolean).join("  ·  ");
+      renderStepView(existing.querySelector(".detail"), step);
+    }
+
+    function choiceQuestions() {
+      return state.choice && Array.isArray(state.choice.questions) ? state.choice.questions : [];
+    }
+
+    function choiceOptions(question) {
+      return [...question.options, { id: OTHER, label: "Other" }];
+    }
+
+    function optionKey(index) {
+      if (index < 9) return String(index + 1);
+      const letter = index - 9;
+      return letter < 26 ? String.fromCharCode(97 + letter) : "";
+    }
+
+    function selectedIds(question) {
+      return state.choiceSelected[question.id] || [];
+    }
+
+    function questionAnswered(question) {
+      const ids = selectedIds(question).filter((id) => id !== OTHER);
+      const other = selectedIds(question).includes(OTHER);
+      const text = String(state.choiceFreeform[question.id] || "").trim();
+      return ids.length > 0 || (other && text.length > 0);
+    }
+
+    function showChoice(choice) {
+      if (!choice || !choice.questions || !choice.questions.length) return;
+      if (choice.id === state.dismissedChoiceId) return;
+      if (state.choice && state.choice.id === choice.id) return;
+      state.choice = choice;
+      state.choiceQuestion = 0;
+      state.choiceOption = 0;
+      state.choiceSelected = {};
+      state.choiceFreeform = {};
+      renderChoices(true);
+    }
+
+    function dismissChoice() {
+      if (state.choice) state.dismissedChoiceId = state.choice.id;
+      state.choice = null;
+      renderChoices();
+    }
+
+    function renderChoices(focusPanel) {
+      const box = document.querySelector("#choices");
+      const questions = choiceQuestions();
+      if (!state.choice || !questions.length) {
+        box.hidden = true;
+        box.replaceChildren();
+        return;
+      }
+      const questionIndex = Math.max(0, Math.min(questions.length - 1, state.choiceQuestion));
+      state.choiceQuestion = questionIndex;
+      const question = questions[questionIndex];
+      const options = choiceOptions(question);
+      state.choiceOption = Math.max(0, Math.min(options.length - 1, state.choiceOption));
+      box.hidden = false;
+      box.replaceChildren();
+      const title = document.createElement("h2");
+      title.textContent = state.choice.title || "需要你选择";
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      meta.textContent = "第 " + (questionIndex + 1) + " 题，共 " + questions.length + " 题";
+      const ask = document.createElement("div");
+      ask.className = "ask";
+      ask.textContent = (questionIndex + 1) + ". " + question.prompt + (question.allowMultiple ? "（可多选）" : "");
+      box.append(title, meta, ask);
+      options.forEach((option, index) => {
+        const active = index === state.choiceOption;
+        const picked = selectedIds(question).includes(option.id);
+        const mark = (active ? "› " : "  ") + (picked ? "[x]" : "[ ]");
+        const key = optionKey(index);
+        if (option.id === OTHER) {
+          const row = document.createElement("div");
+          row.className = "other" + (active ? " active" : "");
+          const label = document.createElement("button");
+          label.type = "button";
+          label.className = "option";
+          label.textContent = mark + " Other";
+          label.addEventListener("click", () => {
+            state.choiceOption = index;
+            selectHighlighted();
+          });
+          const input = document.createElement("input");
+          input.id = "choice-other";
+          input.value = state.choiceFreeform[question.id] || "";
+          input.placeholder = "自己输入";
+          input.addEventListener("input", () => {
+            state.choiceFreeform[question.id] = input.value;
+            const ids = selectedIds(question).filter((id) => id !== OTHER);
+            state.choiceSelected[question.id] = question.allowMultiple ? [...ids, OTHER] : [OTHER];
+          });
+          row.append(label, input);
+          box.append(row);
+          return;
+        }
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "option" + (active ? " active" : "");
+        button.textContent = mark + (key ? " [" + key + "] " : " ") + option.label;
+        button.addEventListener("click", () => {
+          state.choiceOption = index;
+          selectHighlighted();
+        });
+        box.append(button);
+      });
+      const hint = document.createElement("p");
+      hint.className = "hint";
+      hint.textContent = "↑/↓ 选项 · ←/→ 题目 · 空格选定 · 回车下一题或提交 · Esc 跳过。命令行这一轮会先跳过提问，选完后这里把结果发给下一轮。";
+      box.append(hint);
+      if (focusPanel && document.activeElement !== document.querySelector("#message")) box.focus();
+    }
+
+    function moveOption(delta) {
+      const questions = choiceQuestions();
+      if (!questions.length) return;
+      const count = choiceOptions(questions[state.choiceQuestion]).length;
+      state.choiceOption = (state.choiceOption + delta + count) % count;
+      renderChoices();
+    }
+
+    function moveQuestion(delta) {
+      const questions = choiceQuestions();
+      if (!questions.length) return;
+      state.choiceQuestion = Math.max(0, Math.min(questions.length - 1, state.choiceQuestion + delta));
+      state.choiceOption = 0;
+      renderChoices();
+    }
+
+    function selectHighlighted() {
+      const questions = choiceQuestions();
+      const question = questions[state.choiceQuestion];
+      if (!question) return;
+      const option = choiceOptions(question)[state.choiceOption];
+      if (!option) return;
+      const current = selectedIds(question);
+      if (question.allowMultiple) {
+        state.choiceSelected[question.id] = current.includes(option.id)
+          ? current.filter((id) => id !== option.id)
+          : [...current, option.id];
+      } else {
+        state.choiceSelected[question.id] = [option.id];
+      }
+      renderChoices(option.id === OTHER);
+      if (option.id === OTHER) {
+        const input = document.querySelector("#choice-other");
+        if (input) input.focus();
+      }
+    }
+
+    function choiceAnswer() {
+      const lines = ["我的选择："];
+      if (state.choice.title) lines.push(state.choice.title, "");
+      choiceQuestions().forEach((question, index) => {
+        const picked = selectedIds(question);
+        const labels = question.options.filter((option) => picked.includes(option.id)).map((option) => option.label);
+        if (picked.includes(OTHER)) {
+          const text = String(state.choiceFreeform[question.id] || "").trim();
+          if (text) labels.push(text);
+        }
+        lines.push((index + 1) + ". " + question.prompt);
+        lines.push("选择：" + labels.join("、"));
+      });
+      return lines.join("\n");
+    }
+
+    function advanceChoice() {
+      const questions = choiceQuestions();
+      if (!questions.length) return;
+      const question = questions[state.choiceQuestion];
+      if (!questionAnswered(question)) {
+        selectHighlighted();
+        return;
+      }
+      const missing = questions.findIndex((item) => !questionAnswered(item));
+      if (missing >= 0) {
+        state.choiceQuestion = missing;
+        state.choiceOption = 0;
+        renderChoices(true);
+        return;
+      }
+      const text = choiceAnswer();
+      state.dismissedChoiceId = state.choice.id;
+      state.choice = null;
+      renderChoices();
+      sendText(text);
+    }
+
+    function choiceKey(event) {
+      if (!state.choice || event.altKey || event.ctrlKey || event.metaKey) return;
+      if (event.target && event.target.id === "message") return;
+      const typingOther = event.target && event.target.id === "choice-other";
+      if (typingOther) {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          dismissChoice();
+        } else if (event.key === "Enter") {
+          event.preventDefault();
+          advanceChoice();
+        } else if (event.key === "Tab") {
+          event.preventDefault();
+          moveQuestion(event.shiftKey ? -1 : 1);
+        }
+        return;
+      }
+      const questions = choiceQuestions();
+      const options = questions.length ? choiceOptions(questions[state.choiceQuestion]) : [];
+      const byKey = options.findIndex((option, index) => option.id !== OTHER && optionKey(index) === event.key);
+      if (byKey >= 0) {
+        event.preventDefault();
+        state.choiceOption = byKey;
+        selectHighlighted();
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        moveOption(-1);
+      } else if (event.key === "ArrowDown") {
+        event.preventDefault();
+        moveOption(1);
+      } else if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        moveQuestion(-1);
+      } else if (event.key === "ArrowRight") {
+        event.preventDefault();
+        moveQuestion(1);
+      } else if (event.key === " ") {
+        event.preventDefault();
+        selectHighlighted();
+      } else if (event.key === "Enter") {
+        event.preventDefault();
+        advanceChoice();
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        dismissChoice();
+      }
+    }
+
+    async function loadState() {
+      const response = await fetch("/api/state");
+      const json = await response.json();
+      if (!state.chatId) {
+        state.chatId = json.activeChatId || "";
+        if (state.chatId) history.replaceState(null, "", "/?chat=" + state.chatId);
+      }
+      state.remoteRunning = (json.runningChatIds || []).includes(state.chatId);
+      const cancel = document.querySelector("#cancel");
+      if (cancel) cancel.hidden = !(state.running || state.remoteRunning);
+      sessions.replaceChildren();
+      for (const chat of json.chats || []) {
+        const item = document.createElement("li");
+        const button = document.createElement("button");
+        button.type = "button";
+        const busy = (json.runningChatIds || []).includes(chat.chatId);
+        button.className = chat.chatId === state.chatId ? "active" : "";
+        button.textContent = (busy ? "处理中 · " : "") + chat.chatId.slice(0, 8) + " · " + (chat.cwd || "");
+        button.addEventListener("click", () => {
+          state.chatId = chat.chatId;
+          state.viewKey = "";
+          state.pendingQuestion = "";
+          state.inputHistory = [];
+          state.historyCursor = -1;
+          state.historyDraft = "";
+          state.choice = null;
+          state.dismissedChoiceId = "";
+          renderChoices();
+          renderQueue();
+          state.steps = [];
+          state.selectedStep = 0;
+          state.running = false;
+          document.querySelector("#cancel").hidden = true;
+          history.replaceState(null, "", "/?chat=" + chat.chatId);
+          refresh();
+          loadState();
+        });
+        item.append(button);
+        sessions.append(item);
+      }
+      if (!state.running && !state.remoteRunning) drainQueue();
+    }
+
+    async function refresh() {
+      if (!state.chatId) return;
+      const response = await fetch("/api/session/" + state.chatId);
+      if (!response.ok) return;
+      renderSnapshot(await response.json());
+    }
+
+    thread.addEventListener("scroll", () => {
+      if (state.running) return;
+      syncPromptFromScroll();
     });
 
-    document.querySelector("#composer").addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const message = document.querySelector("#message").value.trim();
-      if (!message) return;
-      document.querySelector("#send").disabled = true;
-      document.querySelector("#message").value = "";
-      setStatus("处理中", "run");
-      try {
-        const body = { message };
-        let url = "/v1/session";
-        if (state.sessionId) {
-          url = "/v1/session/" + state.sessionId;
-          body.continuationToken = state.continuationToken;
+    function syncInputHistory(entries) {
+      const fromThread = [];
+      for (const entry of entries || []) {
+        if (entry.type !== "user") continue;
+        const text = String(entry.text || "").trim();
+        if (!text || fromThread[fromThread.length - 1] === text) continue;
+        fromThread.push(text);
+      }
+      const extra = state.inputHistory.filter((text) => !fromThread.includes(text));
+      state.inputHistory = [...fromThread, ...extra].slice(-80);
+      if (state.historyCursor >= state.inputHistory.length) state.historyCursor = state.inputHistory.length - 1;
+    }
+
+    function showInputHistory(index, box) {
+      state.historyCursor = index;
+      const text = index < 0 ? state.historyDraft : (state.inputHistory[index] || "");
+      box.value = text;
+      const pos = text.length;
+      box.setSelectionRange(pos, pos);
+    }
+
+    document.querySelector("#message").addEventListener("keydown", (event) => {
+      if (event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && (event.key === "s" || event.key === "S")) {
+        event.preventDefault();
+        document.querySelector("#composer").requestSubmit();
+        return;
+      }
+      if (event.key === "Escape" && state.running && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
+        event.preventDefault();
+        cancelTurn();
+        return;
+      }
+      if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+      const box = event.currentTarget;
+      if (box.selectionStart !== box.selectionEnd) return;
+      const before = box.value.slice(0, box.selectionStart);
+      const after = box.value.slice(box.selectionEnd);
+      if (event.key === "ArrowUp") {
+        if (before.includes("\n") || !state.inputHistory.length) return;
+        event.preventDefault();
+        if (state.historyCursor < 0) {
+          state.historyDraft = box.value;
+          showInputHistory(state.inputHistory.length - 1, box);
+        } else if (state.historyCursor > 0) {
+          showInputHistory(state.historyCursor - 1, box);
         }
-        const response = await fetch(url, {
+        return;
+      }
+      if (after.includes("\n") || state.historyCursor < 0) return;
+      event.preventDefault();
+      showInputHistory(state.historyCursor >= state.inputHistory.length - 1 ? -1 : state.historyCursor + 1, box);
+    });
+
+    document.addEventListener("keydown", choiceKey);
+
+    function chatQueue() {
+      if (!state.queues[state.chatId]) state.queues[state.chatId] = [];
+      return state.queues[state.chatId];
+    }
+
+    function renderQueue() {
+      const list = document.querySelector("#queue");
+      const items = state.chatId && state.queues[state.chatId] ? state.queues[state.chatId] : [];
+      list.replaceChildren();
+      list.hidden = items.length === 0;
+      items.forEach((text, index) => {
+        const item = document.createElement("li");
+        const label = document.createElement("span");
+        label.textContent = "等待 " + (index + 1) + " · " + text.replace(/\s+/g, " ");
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.textContent = "移除";
+        remove.addEventListener("click", () => {
+          chatQueue().splice(index, 1);
+          renderQueue();
+        });
+        item.append(label, remove);
+        list.append(item);
+      });
+    }
+
+    function rememberInput(text) {
+      const sent = String(text || "").trim();
+      if (sent && state.inputHistory[state.inputHistory.length - 1] !== sent) state.inputHistory.push(sent);
+      if (state.inputHistory.length > 80) state.inputHistory.shift();
+      state.historyCursor = -1;
+      state.historyDraft = "";
+    }
+
+    function enqueue(text) {
+      rememberInput(text);
+      chatQueue().push(text);
+      renderQueue();
+    }
+
+    function drainQueue() {
+      if (state.running || state.remoteRunning || !state.chatId) return;
+      const queue = state.queues[state.chatId];
+      if (!queue || !queue.length) return;
+      const next = queue.shift();
+      renderQueue();
+      sendText(next);
+    }
+
+    function undoPendingSend(text) {
+      const bubbles = [...thread.querySelectorAll("article.bubble.user")];
+      const last = bubbles[bubbles.length - 1];
+      if (!last) return;
+      const body = last.lastElementChild;
+      if (!body || body.textContent.trim() !== text.trim()) return;
+      const marker = last.previousElementSibling;
+      if (marker && marker.classList.contains("turn-marker")) marker.remove();
+      last.remove();
+    }
+
+    async function cancelTurn() {
+      if (!state.chatId || (!state.running && !state.remoteRunning)) return;
+      state.remoteRunning = false;
+      await fetch("/api/cancel", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ chatId: state.chatId }),
+      });
+    }
+
+    async function sendText(text) {
+      if (!text || !state.chatId) return;
+      if (state.running || state.remoteRunning) {
+        enqueue(text);
+        return;
+      }
+      const sentChat = state.chatId;
+      rememberInput(text);
+      state.running = true;
+      state.pendingQuestion = text;
+      setStatus("处理中", "run");
+      addBubble("你", text, "user");
+      thread.scrollTop = thread.scrollHeight;
+      try {
+        const response = await fetch("/api/message", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify(body),
+          body: JSON.stringify({ chatId: state.chatId, text, cwd: state.cwd }),
         });
-        const json = await response.json();
-        if (!response.ok || json.ok === false) throw new Error(json.message || "发送失败");
-        state.sessionId = json.sessionId;
-        state.continuationToken = json.continuationToken;
-        fetch("/api/journal", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ role: "user", text: message, sessionId: json.sessionId }),
-        });
-        if (!state.events.length) state.events = [];
-        await followStream(json.sessionId, state.events.length);
+        if (response.status === 409) {
+          state.remoteRunning = true;
+          state.pendingQuestion = "";
+          undoPendingSend(text);
+          enqueue(text);
+          setStatus("处理中", "run");
+          return;
+        }
+        if (!response.ok) {
+          const json = await response.json();
+          addBubble("失败", json.message || "发送失败", "fail");
+          setStatus("失败", "fail");
+          return;
+        }
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (true) {
+          const chunk = await reader.read();
+          if (chunk.done) break;
+          buffer += decoder.decode(chunk.value, { stream: true });
+          let nl = buffer.indexOf("\n");
+          while (nl >= 0) {
+            const line = buffer.slice(0, nl).trim();
+            buffer = buffer.slice(nl + 1);
+            if (line) {
+              const item = JSON.parse(line);
+              if (state.chatId !== sentChat) continue;
+              if (item.type === "model" && item.model) meta.textContent = state.cwd + " · " + state.chatId + " · " + item.model;
+              if (item.type === "thinking") toolLine.textContent = "思考中";
+              if (item.type === "tool") toolLine.textContent = item.done ? "当前没有工具调用" : "正在调用：" + item.name;
+              if (item.type === "step") {
+                rememberStep(item.step);
+                upsertActivity(item.step);
+              }
+              if (item.type === "assistant" && item.text) absorbAssistant(item.text, item.fresh);
+              if (item.type === "choice") showChoice(item.choice);
+              if (item.type === "usage") renderUsage(item.usage);
+              if (item.type === "done") {
+                const stopped = item.cancelled === true;
+                if (!stopped && item.ok === false) {
+                  addBubble("失败", item.message || "这一轮失败", "fail");
+                  setStatus("失败", "fail");
+                } else {
+                  setStatus("空闲", "ok");
+                }
+                const note = document.createElement("p");
+                note.className = "note " + (!stopped && item.ok !== false ? "turn-end" : "turn-fail");
+                note.textContent = stopped ? "已终止" : item.ok === false ? "本轮失败" : "本轮已结束";
+                thread.append(note);
+                thread.scrollTop = thread.scrollHeight;
+              } else if (item.type === "error") {
+                addBubble("失败", item.message || "这一轮失败", "fail");
+                setStatus("失败", "fail");
+              }
+            }
+            nl = buffer.indexOf("\n");
+          }
+        }
       } catch (error) {
-        addBubble("失败", explainFailure(error.message), "fail");
+        addBubble("失败", error.message, "fail");
         setStatus("失败", "fail");
       } finally {
-        document.querySelector("#send").disabled = false;
+        if (state.chatId === sentChat) {
+          state.running = false;
+          await refresh();
+        }
+        await loadState();
+        if (state.chatId === sentChat) drainQueue();
       }
-    });
+    }
 
-    loadProjects()
-      .then(() => loadMeta())
-      .then(loadSessions)
-      .catch((error) => {
-        showError(error.message);
-        setStatus("失败", "fail");
-      });
+    document.querySelector("#composer").addEventListener("submit", (event) => {
+      event.preventDefault();
+      const box = document.querySelector("#message");
+      const text = box.value.trim();
+      if (!text || !state.chatId) return;
+      box.value = "";
+      sendText(text);
+    });
+    document.querySelector("#cancel").addEventListener("click", () => cancelTurn());
+
+    document.querySelector("#open-monitor").addEventListener("click", () => openMonitor());
+    document.querySelector("#close-monitor").addEventListener("click", () => { monitor.hidden = true; });
+    loadState().then(refresh);
+    setInterval(() => {
+      loadState();
+      if (!state.running) refresh();
+    }, 2000);
   </script>
 </body>
 </html>
