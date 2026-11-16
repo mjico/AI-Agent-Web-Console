@@ -135,6 +135,100 @@ function findTranscript(chatId) {
   return null;
 }
 
+function toolScroll(input) {
+  const data = input || {};
+  const args = data.arguments && typeof data.arguments === "object" ? data.arguments : {};
+  const parts = [
+    data.description,
+    args.description,
+    data.command,
+    args.command,
+    data.prompt || data.task,
+    args.prompt || args.task,
+    data.path || data.file_path || data.target_directory,
+    args.path || args.file_path,
+  ].filter((item) => typeof item === "string" && item.trim());
+  if (typeof data.old_string === "string" || typeof data.new_string === "string" || typeof data.contents === "string") {
+    parts.push(["--- 原来的内容", data.old_string || "", "+++ 写成", data.new_string || data.contents || ""].join("\n"));
+  }
+  let text = parts.join("\n\n").trim();
+  if (text.length > 8000) text = `${text.slice(0, 8000)}\n…（已截断，子代理滚屏会在点开后继续加载）`;
+  return text;
+}
+
+function promptHead(input) {
+  const data = input || {};
+  const args = data.arguments && typeof data.arguments === "object" ? data.arguments : {};
+  const prompt = data.prompt || data.task || args.prompt || args.task || "";
+  return normalizeText(prompt).slice(0, 160);
+}
+
+function isSubagentCall(name, input) {
+  const data = input || {};
+  const args = data.arguments && typeof data.arguments === "object" ? data.arguments : {};
+  return /task|subagent|agent/i.test(name) || data.subagent_type || args.subagent_type || data.toolName === "Task" || args.toolName === "Task";
+}
+
+function subagentLog(file) {
+  const lines = [];
+  for (const line of fs.readFileSync(file, "utf8").split(/\n/)) {
+    if (!line.trim()) continue;
+    let row;
+    try {
+      row = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (row.role === "user" || row.role === "assistant") {
+      const content = row.message?.content;
+      const text = visibleText(textFromContent(content), row.role);
+      if (text) lines.push(`${row.role === "user" ? "你" : "Cursor"}\n${text}`);
+      for (const item of Array.isArray(content) ? content : []) {
+        if (!item || (item.type !== "tool_use" && item.type !== "tool_call")) continue;
+        const name = item.name || item.toolName || "工具";
+        const summary = summarizeTool(name, item.input || item.args || {});
+        const body = toolScroll(item.input || item.args || {});
+        lines.push([summary.label || name, summary.title || ""].filter(Boolean).join("  ") + (body ? `\n${body}` : ""));
+      }
+    }
+  }
+  let text = lines.join("\n\n").trim();
+  if (text.length > 180000) text = `${text.slice(0, 180000)}\n…（滚屏已截断）`;
+  return text;
+}
+
+function findSubagentScroll(chatId, head) {
+  const needle = normalizeText(head).slice(0, 160);
+  if (needle.length < 24) return "";
+  const transcript = findTranscript(chatId);
+  if (!transcript) return "";
+  const dir = path.join(path.dirname(transcript), "subagents");
+  if (!fs.existsSync(dir)) return "";
+  for (const name of fs.readdirSync(dir)) {
+    if (!name.endsWith(".jsonl")) continue;
+    const file = path.join(dir, name);
+    let first = "";
+    const fd = fs.openSync(file, "r");
+    try {
+      const buffer = Buffer.alloc(12000);
+      const read = fs.readSync(fd, buffer, 0, buffer.length, 0);
+      first = buffer.subarray(0, read).toString("utf8").split(/\n/, 1)[0];
+    } finally {
+      fs.closeSync(fd);
+    }
+    let row;
+    try {
+      row = JSON.parse(first);
+    } catch {
+      continue;
+    }
+    const query = normalizeText(visibleText(textFromContent(row.message?.content), "user"));
+    if (!query) continue;
+    if (query.startsWith(needle) || needle.startsWith(query.slice(0, needle.length))) return subagentLog(file);
+  }
+  return "";
+}
+
 function textFromContent(content) {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
@@ -189,13 +283,21 @@ function summarizeTool(name, input) {
     const command = String(data.command || "");
     return { kind: "shell", label: "命令", title: data.description || command.split("\n")[0].slice(0, 180) || "命令", stat: "", detail: clip(command, 1600) };
   }
+  if (isSubagentCall(name, data)) {
+    const args = data.arguments && typeof data.arguments === "object" ? data.arguments : data;
+    return {
+      kind: "subagent",
+      label: "子代理",
+      title: args.description || data.description || args.subagent_type || data.subagent_type || name,
+      stat: args.subagent_type || data.subagent_type || "",
+      detail: clip(args.prompt || args.task || data.prompt || data.task || "", 1200),
+      promptHead: promptHead(data),
+    };
+  }
   if (name === "CallDynamicTool" || name === "GetDynamicTools") {
     const title = [data.namespace, data.toolName].filter(Boolean).join(" / ") || name;
     const skill = /skill/i.test(title) || name === "GetDynamicTools";
     return { kind: skill ? "skill" : "call", label: skill ? "技能" : "调用", title, stat: "", detail: clip(JSON.stringify(data.arguments || data, null, 2), 1200) };
-  }
-  if (/task|subagent|agent/i.test(name) || data.subagent_type) {
-    return { kind: "subagent", label: "子代理", title: data.description || data.subagent_type || name, stat: data.subagent_type || "", detail: clip(data.prompt || data.task || "", 1200) };
   }
   return { kind: "tool", label: name, title: file || name, stat: "", detail: "" };
 }
@@ -263,7 +365,8 @@ function parseTranscript(chatId) {
       for (const item of Array.isArray(content) ? content : []) {
         if (!item || (item.type !== "tool_use" && item.type !== "tool_call")) continue;
         const name = item.name || item.toolName || "工具";
-        const summary = summarizeTool(name, item.input || item.args || {});
+        const toolInput = item.input || item.args || {};
+        const summary = summarizeTool(name, toolInput);
         tools.push(name);
         if (tools.length > 8) tools.shift();
         const step = {
@@ -274,7 +377,8 @@ function parseTranscript(chatId) {
           status: "done",
           durationMs: null,
           source: "transcript",
-          raw: capRaw({ name, input: slimInput(item.input || item.args || {}) }),
+          scroll: toolScroll(toolInput),
+          raw: capRaw({ name, input: slimInput(toolInput) }),
         };
         pushStep(steps, step);
         if (turnTools >= 30) skippedTools += 1;
@@ -686,6 +790,7 @@ function handleStreamLine(session, line, emit) {
         Object.assign(step, summary, { name, type: "tool" });
         step.durationMs = Math.max(0, end - (step.startedAt || end));
         step.status = "done";
+        step.scroll = toolScroll(liveToolInput(event));
         step.raw = capRaw({ name, input: slimInput(liveToolInput(event)) });
         emit({ type: "step", step });
       }
@@ -700,6 +805,7 @@ function handleStreamLine(session, line, emit) {
         startedAt: event.timestamp_ms || Date.now(),
         durationMs: null,
         source: "live",
+        scroll: toolScroll(liveToolInput(event)),
         raw: capRaw({ name, input: slimInput(liveToolInput(event)) }),
       };
       pushStep(session.steps, step);
@@ -846,6 +952,18 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       sendJson(res, 200, snapshot(chatId));
+      return;
+    }
+    const scrollMatch = url.pathname.match(/^\/api\/session\/([^/]+)\/scroll$/);
+    if (req.method === "GET" && scrollMatch) {
+      const chatId = decodeURIComponent(scrollMatch[1]);
+      const head = url.searchParams.get("head") || "";
+      if (!chatIdPattern.test(chatId)) {
+        sendJson(res, 400, { ok: false, message: "chat id 无效。" });
+        return;
+      }
+      const text = findSubagentScroll(chatId, head);
+      sendJson(res, 200, { ok: true, found: Boolean(text), text });
       return;
     }
     if (req.method === "POST" && url.pathname === "/api/cancel") {

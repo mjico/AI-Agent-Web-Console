@@ -83,20 +83,31 @@
     .diff-del, .diff-add { padding: 1px 8px; }
     .diff-del { background: var(--fail-bg); color: var(--fail); }
     .diff-add { background: #e5f6ea; color: var(--ok); }
-    .activity .detail { display: none; margin: 6px 0 0; padding: 8px 10px; overflow: auto; max-height: 320px; background: var(--panel); border-radius: 8px; }
+    .activity .detail { display: none; margin: 6px 0 0; padding: 8px 10px; overflow: visible; background: var(--panel); border-radius: 8px; }
+    .scroll-log { margin: 0; max-height: 70vh; overflow: auto; white-space: pre-wrap; word-break: break-word; font: 13px/1.45 Consolas, "Cascadia Mono", monospace; }
+    #raw .scroll-log { max-height: none; overflow: visible; }
     .activity.open .detail { display: block; }
     .chat { display: grid; grid-template-rows: auto 1fr auto auto; min-height: 0; }
     .prompt {
       display: none;
-      max-height: 28vh;
-      overflow: auto;
-      padding: 12px 18px;
+      padding: 8px 0 6px;
       border-bottom: 1px solid var(--line);
       background: #e7f4f3;
     }
     .prompt.show { display: block; }
-    .prompt .body { max-width: 760px; white-space: pre-wrap; word-break: break-word; }
-    .thread { overflow: auto; padding: 18px; min-height: 0; }
+    .prompt .who { margin: 0 18px 2px; }
+    .prompt .body-scroll {
+      max-height: 4.5em;
+      overflow: auto;
+      padding: 0 18px;
+      scrollbar-gutter: stable;
+    }
+    .prompt .body {
+      max-width: 760px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .thread { overflow: auto; scrollbar-gutter: stable; padding: 18px; min-height: 0; }
     .turn-marker { height: 0; margin: 0; padding: 0; border: 0; overflow: hidden; }
     .bubble { max-width: 760px; margin: 0 0 12px; padding: 10px 12px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); white-space: pre-wrap; }
     .bubble.user { margin-left: auto; background: #d9ecea; border-color: #b7d8d5; }
@@ -162,7 +173,9 @@
     <section class="chat">
       <div id="prompt" class="prompt" aria-live="polite">
         <span class="who">你</span>
-        <div id="prompt-text" class="body"></div>
+        <div class="body-scroll">
+          <div id="prompt-text" class="body"></div>
+        </div>
       </div>
       <div id="thread" class="thread"></div>
       <div id="choices" class="choices" hidden tabindex="0"></div>
@@ -359,13 +372,46 @@
       container.append(wrap);
     }
 
+    const scrollCache = new Map();
+    const scrollLoads = new Map();
+
     function showRaw(step) {
+      const top = rawView.scrollTop;
       rawView.replaceChildren();
       if (!step) {
         rawView.textContent = "点左侧一步，查看这一步做了什么。";
         return;
       }
       renderStepView(rawView, step);
+      rawView.scrollTop = top;
+    }
+
+    function loadScroll(head, log) {
+      if (scrollCache.has(head)) {
+        log.textContent = scrollCache.get(head);
+        return;
+      }
+      let pending = scrollLoads.get(head);
+      if (!pending) {
+        pending = fetch("/api/session/" + encodeURIComponent(state.chatId) + "/scroll?head=" + encodeURIComponent(head))
+          .then((response) => response.ok ? response.json() : null)
+          .then((data) => {
+            const text = data && data.text ? data.text : "";
+            if (text) scrollCache.set(head, text);
+            scrollLoads.delete(head);
+            return text;
+          })
+          .catch(() => {
+            scrollLoads.delete(head);
+            return "";
+          });
+        scrollLoads.set(head, pending);
+      }
+      pending.then((text) => {
+        if (!log.isConnected || log.dataset.head !== head) return;
+        if (text) log.textContent = text;
+        else if (!log.textContent) log.textContent = "没有找到这个子代理的滚屏记录。";
+      });
     }
 
     function renderStepView(container, step) {
@@ -376,20 +422,28 @@
       head.textContent = [step.label || step.name || "步骤", step.title || "", step.stat || "", flag, formatDuration(step.durationMs)].filter(Boolean).join("  ·  ");
       container.append(head);
       const parsed = stepPayload(step);
-      const input = parsed && parsed.input && typeof parsed.input === "object" ? parsed.input : parsed;
-      if (input && (input.old_string || input.new_string)) addDiff(container, input.old_string, input.new_string);
-      const skip = new Set(["old_string", "new_string", "name"]);
-      if (input && typeof input === "object") {
-        for (const key of Object.keys(input)) {
-          if (skip.has(key)) continue;
-          addField(container, fieldLabels[key] || key, input[key]);
+      const input = parsed && parsed.input && typeof parsed.input === "object" ? parsed.input : null;
+      if (step.kind === "edit" && input && (input.old_string || input.new_string)) addDiff(container, input.old_string, input.new_string);
+      const log = document.createElement("pre");
+      log.className = "scroll-log";
+      const cached = step.promptHead ? scrollCache.get(step.promptHead) : "";
+      log.textContent = cached || step.scroll || step.detail || "";
+      if (log.textContent || step.promptHead) container.append(log);
+      if (step.promptHead && state.chatId && !cached) {
+        log.dataset.head = step.promptHead;
+        if (!log.textContent) log.textContent = "正在读取子代理滚屏…";
+        loadScroll(step.promptHead, log);
+      } else if (!log.textContent) {
+        if (input && typeof input === "object") {
+          const skip = new Set(["old_string", "new_string", "name"]);
+          for (const key of Object.keys(input)) {
+            if (!skip.has(key)) addField(container, fieldLabels[key] || key, input[key]);
+          }
+        } else if (step.raw && !step.raw.startsWith("{")) {
+          addField(container, "内容", step.raw);
         }
-      } else if (step.detail) {
-        addField(container, "内容", step.detail);
-      } else if (step.raw) {
-        addField(container, "内容", step.raw);
       }
-      if (!container.children.length || container.children.length === 1 && !step.detail && !parsed) {
+      if (container.children.length === 1) {
         const empty = document.createElement("p");
         empty.className = "note";
         empty.textContent = "这一步没有更多内容。";
@@ -582,7 +636,7 @@
         data.status,
         data.tool || "",
         data.omitted || 0,
-        ...entries.map((entry) => [entry.type, entry.id || "", entry.title || "", entry.text || "", entry.detail || ""].join("\n")),
+        ...entries.map((entry) => [entry.type, entry.id || "", entry.title || "", entry.text || "", entry.detail || "", entry.promptHead || "", entry.scroll || ""].join("\n")),
       ].join("\u0001");
       if (state.running || viewKey === state.viewKey) return;
       state.viewKey = viewKey;
