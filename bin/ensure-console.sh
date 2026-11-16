@@ -43,7 +43,7 @@ if [[ -z "$REAL" || ! -e "$REAL" ]]; then
   echo "Cursor CLI not found. Set CURSOR_AGENT_BIN or install ~/.local/bin/agent" >&2
   exit 1
 fi
-if [[ "$REAL" -ef "$BIN/agent" ]]; then
+if [[ "$REAL" -ef "$BIN/cursor-web" ]]; then
   echo "CURSOR_AGENT_BIN points at the WebAI wrapper. Set it to the real Cursor agent." >&2
   exit 1
 fi

@@ -1,13 +1,21 @@
 import { spawn } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const publicDir = path.join(root, "console", "public");
 const statePath = path.join(root, "console", "cli-sessions.json");
+const authPath = path.join(root, "console", "auth.json");
 const uiPort = 3080;
+const listenHost = process.platform === "win32" ? "127.0.0.1" : "0.0.0.0";
+const authRequired = process.platform !== "win32";
+const minPasswordLength = 4;
+const authSessions = new Map();
+const loginFailures = new Map();
 const chatIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const sessions = new Map();
@@ -106,6 +114,151 @@ function sendJson(res, status, body) {
     "cache-control": "no-store",
   });
   res.end(JSON.stringify(body));
+}
+
+function sendHtml(res, name) {
+  const html = fs.readFileSync(path.join(publicDir, name));
+  res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+  res.end(html);
+}
+
+function loadAuth() {
+  try {
+    const data = JSON.parse(fs.readFileSync(authPath, "utf8"));
+    if (!data || typeof data.salt !== "string" || typeof data.hash !== "string") return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function saveAuth(password) {
+  const salt = crypto.randomBytes(16).toString("base64");
+  const hash = crypto.scryptSync(password, Buffer.from(salt, "base64"), 32).toString("base64");
+  fs.writeFileSync(authPath, `${JSON.stringify({ salt, hash })}\n`, { mode: 0o600 });
+  try { fs.chmodSync(authPath, 0o600); } catch {}
+}
+
+function passwordMatches(password) {
+  const auth = loadAuth();
+  if (!auth || typeof password !== "string") return false;
+  const actual = crypto.scryptSync(password, Buffer.from(auth.salt, "base64"), 32);
+  const expected = Buffer.from(auth.hash, "base64");
+  if (actual.length !== expected.length) return false;
+  return crypto.timingSafeEqual(actual, expected);
+}
+
+function clientIp(req) {
+  const raw = req.socket.remoteAddress || "";
+  return raw.startsWith("::ffff:") ? raw.slice(7) : raw;
+}
+
+function isLoopback(req) {
+  const ip = clientIp(req);
+  return ip === "127.0.0.1" || ip === "::1";
+}
+
+function readCookie(req, name) {
+  const header = req.headers.cookie || "";
+  for (const part of header.split(";")) {
+    const text = part.trim();
+    const eq = text.indexOf("=");
+    if (eq === -1) continue;
+    if (text.slice(0, eq) === name) return decodeURIComponent(text.slice(eq + 1));
+  }
+  return "";
+}
+
+function hasSession(req) {
+  const token = readCookie(req, "webai_session");
+  if (!token) return false;
+  const expires = authSessions.get(token);
+  if (!expires || expires < Date.now()) {
+    authSessions.delete(token);
+    return false;
+  }
+  return true;
+}
+
+function setSession(res) {
+  const token = crypto.randomBytes(24).toString("base64url");
+  authSessions.set(token, Date.now() + 12 * 60 * 60 * 1000);
+  res.setHeader("Set-Cookie", "webai_session=" + token + "; HttpOnly; SameSite=Lax; Path=/");
+}
+
+function loginBlocked(ip) {
+  const row = loginFailures.get(ip);
+  return Boolean(row && row.count >= 8 && row.resetAt > Date.now());
+}
+
+function noteLoginFailure(ip) {
+  const now = Date.now();
+  const row = loginFailures.get(ip);
+  if (!row || row.resetAt < now) {
+    loginFailures.set(ip, { count: 1, resetAt: now + 10 * 60 * 1000 });
+    return;
+  }
+  row.count += 1;
+}
+
+function noteLoginSuccess(ip) {
+  loginFailures.delete(ip);
+}
+
+function askHidden(label) {
+  return new Promise((resolve) => {
+    process.stdout.write(label);
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    process.stdin.setEncoding("utf8");
+    let value = "";
+    const onData = (key) => {
+      if (key === "\u0003") process.exit(1);
+      if (key === "\r" || key === "\n") {
+        process.stdin.setRawMode(false);
+        process.stdin.pause();
+        process.stdin.off("data", onData);
+        process.stdout.write("\n");
+        resolve(value);
+        return;
+      }
+      if (key === "\u007f" || key === "\b") {
+        if (value.length) {
+          value = value.slice(0, -1);
+          process.stdout.write("\b \b");
+        }
+        return;
+      }
+      if (key < " ") return;
+      value += key;
+      process.stdout.write("*");
+    };
+    process.stdin.on("data", onData);
+  });
+}
+
+async function promptInitialPassword() {
+  if (!authRequired || loadAuth()) return;
+  if (!process.stdin.isTTY) {
+    process.stdout.write("尚未设置密码。请在浏览器打开控制台，按页面提示设置。\n");
+    return;
+  }
+  process.stdout.write("首次启动 WebAI，请设置访问密码。\n");
+  for (;;) {
+    const password = await askHidden("设置密码（至少 4 位）：");
+    if (password.length < minPasswordLength) {
+      process.stdout.write("密码至少 4 位。\n");
+      continue;
+    }
+    const again = await askHidden("再输入一次：");
+    if (password !== again) {
+      process.stdout.write("两次输入不一致。\n");
+      continue;
+    }
+    saveAuth(password);
+    process.stdout.write("密码已保存。打开网页时需要输入这个密码。\n");
+    return;
+  }
 }
 
 function rememberChat(chatId, cwd) {
@@ -918,10 +1071,68 @@ function startTurn(chatId, cwd, text, res) {
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url || "/", `http://127.0.0.1:${uiPort}`);
+    if (authRequired && req.method === "GET" && url.pathname === "/api/auth/status") {
+      sendJson(res, 200, { configured: Boolean(loadAuth()) });
+      return;
+    }
+    if (authRequired && req.method === "POST" && url.pathname === "/api/auth/setup") {
+      if (loadAuth()) {
+        sendJson(res, 409, { ok: false, message: "密码已经设置。" });
+        return;
+      }
+      const body = await readBody(req);
+      const password = typeof body.password === "string" ? body.password : "";
+      const confirm = typeof body.confirm === "string" ? body.confirm : "";
+      if (password.length < minPasswordLength) {
+        sendJson(res, 400, { ok: false, message: "密码至少 4 位。" });
+        return;
+      }
+      if (password !== confirm) {
+        sendJson(res, 400, { ok: false, message: "两次输入不一致。" });
+        return;
+      }
+      saveAuth(password);
+      noteLoginSuccess(clientIp(req));
+      setSession(res);
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+    if (authRequired && req.method === "POST" && url.pathname === "/api/auth/login") {
+      const ip = clientIp(req);
+      if (loginBlocked(ip)) {
+        sendJson(res, 429, { ok: false, message: "尝试次数过多，请稍后再试。" });
+        return;
+      }
+      if (!loadAuth()) {
+        sendJson(res, 409, { ok: false, message: "请先设置密码。" });
+        return;
+      }
+      const body = await readBody(req);
+      const password = typeof body.password === "string" ? body.password : "";
+      if (!passwordMatches(password)) {
+        noteLoginFailure(ip);
+        sendJson(res, 401, { ok: false, message: "密码不正确。" });
+        return;
+      }
+      noteLoginSuccess(ip);
+      setSession(res);
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+    const loopbackOpen = isLoopback(req) && (
+      (req.method === "GET" && url.pathname === "/api/state") ||
+      (req.method === "POST" && url.pathname === "/api/attach")
+    );
+    if (authRequired && !loopbackOpen && !hasSession(req)) {
+      if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html" || url.pathname === "/login.html")) {
+        sendHtml(res, "login.html");
+        return;
+      }
+      sendJson(res, 401, { ok: false, message: "需要登录。" });
+      return;
+    }
     if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
-      const html = fs.readFileSync(path.join(publicDir, "index.html"));
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
-      res.end(html);
+      sendHtml(res, "index.html");
       return;
     }
     if (req.method === "GET" && url.pathname === "/api/state") {
@@ -1014,6 +1225,22 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(uiPort, "127.0.0.1", () => {
-  process.stdout.write(`WebAI console  http://127.0.0.1:${uiPort}/\n`);
+function listenUrls() {
+  const urls = [`http://127.0.0.1:${uiPort}/`];
+  for (const entries of Object.values(os.networkInterfaces())) {
+    for (const entry of entries || []) {
+      const family = entry.family === 4 ? "IPv4" : entry.family;
+      if (family === "IPv4" && !entry.internal) urls.push(`http://${entry.address}:${uiPort}/`);
+    }
+  }
+  return urls;
+}
+
+await promptInitialPassword();
+server.listen(uiPort, listenHost, () => {
+  if (listenHost === "127.0.0.1") {
+    process.stdout.write(`WebAI console  http://127.0.0.1:${uiPort}/\n`);
+    return;
+  }
+  for (const url of listenUrls()) process.stdout.write(`WebAI console  ${url}\n`);
 });

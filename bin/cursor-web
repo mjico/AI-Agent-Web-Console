@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -u
-BIN="$(cd "$(dirname "$0")" && pwd)"
+SELF="${BASH_SOURCE[0]:-$0}"
+while [[ -L "$SELF" ]]; do
+  link="$(readlink "$SELF")"
+  if [[ "$link" == /* ]]; then SELF="$link"
+  else SELF="$(cd "$(dirname "$SELF")" && pwd)/$link"
+  fi
+done
+BIN="$(cd "$(dirname "$SELF")" && pwd)"
 REAL="${CURSOR_AGENT_BIN:-}"
 if [[ -z "$REAL" || ! -e "$REAL" ]]; then
   if [[ -e "$HOME/.local/bin/agent" ]]; then REAL="$HOME/.local/bin/agent"
@@ -9,7 +16,7 @@ if [[ -z "$REAL" || ! -e "$REAL" ]]; then
   else REAL="$(command -v agent || true)"
   fi
 fi
-if [[ -z "$REAL" || ! -e "$REAL" || "$REAL" -ef "$BIN/agent" ]]; then
+if [[ -z "$REAL" || ! -e "$REAL" || "$REAL" -ef "$BIN/cursor-web" ]]; then
   echo "Cursor CLI not found. Set CURSOR_AGENT_BIN." >&2
   exit 1
 fi

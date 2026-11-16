@@ -9,5 +9,6 @@ interactions
 console/projects.json
 console/cli-sessions.json
 console/last-by-cwd.json
+console/auth.json
 console/serve*.log
 bin/last-launch.txt

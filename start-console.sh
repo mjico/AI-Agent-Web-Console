@@ -22,5 +22,5 @@ if [[ -z "$NODE" || ! -x "$NODE" ]]; then
   exit 1
 fi
 cd "$ROOT"
-echo "WebAI 控制台  http://127.0.0.1:3080/"
+echo "WebAI 控制台启动中，监听 0.0.0.0:3080"
 exec "$NODE" "$ROOT/console/server.mjs"

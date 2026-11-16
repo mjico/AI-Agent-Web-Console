@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WebAI</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f1ea;
+      --panel: #fffdf8;
+      --ink: #1c1915;
+      --muted: #6d655c;
+      --line: #e4ddd2;
+      --accent: #0f6e6b;
+      --accent-ink: #f7fffe;
+      --fail: #9d2430;
+      --fail-bg: #fdecef;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      font: 15px/1.5 "Segoe UI", "Microsoft YaHei", sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+    }
+    form {
+      width: min(420px, calc(100vw - 32px));
+      padding: 28px 24px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+    }
+    h1 { margin: 0; font-size: 22px; }
+    p { margin: 8px 0 0; color: var(--muted); }
+    label { display: block; margin: 16px 0 6px; color: var(--muted); font-size: 13px; }
+    input, button { font: inherit; width: 100%; }
+    input {
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--ink);
+    }
+    button {
+      margin-top: 18px;
+      border: 0;
+      border-radius: 8px;
+      padding: 10px 12px;
+      background: var(--accent);
+      color: var(--accent-ink);
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.55; cursor: wait; }
+    .error {
+      display: none;
+      margin: 14px 0 0;
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: var(--fail-bg);
+      color: var(--fail);
+    }
+    .error.show { display: block; }
+  </style>
+</head>
+<body>
+  <form id="gate">
+    <h1>WebAI</h1>
+    <p id="lead">正在确认访问状态…</p>
+    <div id="fields"></div>
+    <p id="error" class="error"></p>
+    <button id="submit" type="submit" disabled>继续</button>
+  </form>
+  <script>
+    const lead = document.querySelector("#lead");
+    const fields = document.querySelector("#fields");
+    const error = document.querySelector("#error");
+    const submit = document.querySelector("#submit");
+    let mode = "login";
+
+    function showError(text) {
+      error.textContent = text || "";
+      error.classList.toggle("show", Boolean(text));
+    }
+
+    function field(id, label, autocomplete) {
+      const wrap = document.createElement("label");
+      wrap.htmlFor = id;
+      wrap.textContent = label;
+      const input = document.createElement("input");
+      input.id = id;
+      input.name = id;
+      input.type = "password";
+      input.autocomplete = autocomplete;
+      input.required = true;
+      fields.append(wrap, input);
+      return input;
+    }
+
+    async function load() {
+      const response = await fetch("/api/auth/status");
+      const status = await response.json();
+      mode = status.configured ? "login" : "setup";
+      fields.replaceChildren();
+      if (mode === "setup") {
+        lead.textContent = "第一次打开，请设置访问密码。之后每次打开窗口都要输入它。";
+        field("password", "密码（至少 4 位）", "new-password");
+        field("confirm", "再输入一次", "new-password");
+        submit.textContent = "设置密码";
+      } else {
+        lead.textContent = "请输入密码后进入控制台。";
+        field("password", "密码", "current-password");
+        submit.textContent = "进入";
+      }
+      submit.disabled = false;
+      fields.querySelector("input").focus();
+    }
+
+    document.querySelector("#gate").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      showError("");
+      submit.disabled = true;
+      const password = document.querySelector("#password").value;
+      const confirm = document.querySelector("#confirm");
+      const path = mode === "setup" ? "/api/auth/setup" : "/api/auth/login";
+      const body = mode === "setup"
+        ? { password, confirm: confirm ? confirm.value : "" }
+        : { password };
+      try {
+        const response = await fetch(path, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          showError(result.message || "没有通过校验。");
+          submit.disabled = false;
+          return;
+        }
+        location.reload();
+      } catch {
+        showError("无法连接控制台。");
+        submit.disabled = false;
+      }
+    });
+
+    load().catch(() => {
+      lead.textContent = "无法确认访问状态。";
+      showError("请刷新页面再试。");
+    });
+  </script>
+</body>
+</html>
