@@ -2,6 +2,8 @@
 
 ## 2026-11-16
 
+- 页头可以在「图形化」和「纯文本」两种阅读方式之间切换。
+- Cursor 回复支持 Markdown，包括表格，以及 Mermaid 流程图、时序图等图形。Windows 和 Linux 共用这套页面。
 - Linux 包装命令改为 `cursor-web`，避免和 Cursor 自带的 `agent` 冲突。Windows 仍使用 `bin/agent.cmd`，命令名和只监听 `127.0.0.1` 的行为不变。
 - Linux 控制台监听 `0.0.0.0:3080`。第一次打开网页设置密码，之后打开窗口要校验；Windows 不启用这套密码。
 - 工具步骤点开可看更多滚屏：子代理走 `/api/session/:id/scroll`，本地缓存完整文本，避免 2 秒轮询把内容抖回短提示。

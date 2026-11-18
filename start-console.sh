@@ -13,7 +13,15 @@ find_node() {
     if [[ -x "$home/bin/node" ]]; then printf "%s" "$home/bin/node"; return; fi
     if [[ -x "$home/node" ]]; then printf "%s" "$home/node"; return; fi
   fi
-  command -v node || true
+  local found=""
+  found="$(command -v node || true)"
+  if [[ -n "$found" && -x "$found" ]]; then printf "%s" "$found"; return; fi
+  local versions="$HOME/.local/share/cursor-agent/versions"
+  if [[ -d "$versions" ]]; then
+    local newest=""
+    newest="$(find "$versions" -mindepth 2 -maxdepth 2 -type f -name node -executable 2>/dev/null | sort | tail -n 1)"
+    if [[ -n "$newest" ]]; then printf "%s" "$newest"; return; fi
+  fi
 }
 
 NODE="$(find_node)"

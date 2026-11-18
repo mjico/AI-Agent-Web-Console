@@ -1131,6 +1131,16 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 401, { ok: false, message: "需要登录。" });
       return;
     }
+    const publicFile = {
+      "/render-md.js": "text/javascript; charset=utf-8",
+      "/mermaid.min.js": "text/javascript; charset=utf-8",
+    }[url.pathname];
+    if (req.method === "GET" && publicFile) {
+      const file = path.join(publicDir, path.basename(url.pathname));
+      res.writeHead(200, { "content-type": publicFile, "cache-control": "no-cache" });
+      res.end(fs.readFileSync(file));
+      return;
+    }
     if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
       sendHtml(res, "index.html");
       return;

@@ -34,6 +34,11 @@
     header h1 { margin: 0; font-size: 18px; }
     header p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
     .pill { margin-left: auto; padding: 4px 10px; border-radius: 999px; background: #ece7df; font-size: 13px; }
+    .header-tools { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+    .header-tools .pill { margin-left: 0; }
+    #render-mode { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+    #render-mode[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+    .bubble .plain { white-space: pre-wrap; word-break: break-word; }
     .pill.run { background: #e5f0fb; color: var(--run); }
     .pill.ok { background: #e5f6ea; color: var(--ok); }
     .pill.fail { background: var(--fail-bg); color: var(--fail); }
@@ -113,6 +118,24 @@
     .bubble.user { margin-left: auto; background: #d9ecea; border-color: #b7d8d5; }
     .bubble.answer { border-color: #9cc9c6; box-shadow: inset 3px 0 0 var(--accent); }
     .bubble.fail { background: var(--fail-bg); border-color: #f3c2c8; }
+    .bubble.rich { max-width: min(920px, 100%); white-space: normal; }
+    .bubble .md > :first-child { margin-top: 0; }
+    .bubble .md > :last-child { margin-bottom: 0; }
+    .bubble .md p, .bubble .md ul, .bubble .md ol, .bubble .md pre, .bubble .md blockquote, .bubble .md h1, .bubble .md h2, .bubble .md h3, .bubble .md h4, .bubble .md h5, .bubble .md h6 { margin: 0 0 8px; }
+    .bubble .md h1, .bubble .md h2, .bubble .md h3, .bubble .md h4 { font-size: 16px; line-height: 1.3; }
+    .bubble .md h1 { font-size: 20px; }
+    .bubble .md ul, .bubble .md ol { padding-left: 1.2em; }
+    .bubble .md blockquote { padding-left: 10px; border-left: 3px solid var(--line); color: var(--muted); }
+    .bubble .md a { color: var(--accent); }
+    .bubble .md .table-wrap { overflow: auto; margin: 0 0 8px; }
+    .bubble .md table { border-collapse: collapse; width: 100%; }
+    .bubble .md th, .bubble .md td { border: 1px solid var(--line); padding: 4px 8px; vertical-align: top; }
+    .bubble .md th { background: #f7f3ec; }
+    .bubble .md pre { overflow: auto; background: var(--bg); padding: 8px 10px; border-radius: 8px; }
+    .bubble .md code { font-family: Consolas, "Cascadia Mono", monospace; font-size: 13px; }
+    .bubble .md p code, .bubble .md li code, .bubble .md td code { background: var(--bg); padding: 0 4px; border-radius: 4px; }
+    .bubble .md .lang { display: block; margin-bottom: 4px; color: var(--muted); font-size: 12px; }
+    .bubble .mermaid { overflow: auto; margin: 0 0 8px; padding: 8px; border-radius: 8px; background: #fff; }
     .who { display: block; margin-bottom: 4px; color: var(--muted); font-size: 12px; }
     .note.turn-end, .note.turn-fail {
       max-width: 760px;
@@ -158,7 +181,10 @@
       <p id="meta">等待附着到 Cursor CLI 会话</p>
       <p id="usage" class="note">本会话还没有 token 记录</p>
     </div>
-    <span id="status" class="pill">空闲</span>
+    <div class="header-tools">
+      <button type="button" id="render-mode" aria-pressed="true">图形化</button>
+      <span id="status" class="pill">空闲</span>
+    </div>
   </header>
   <main>
     <aside>
@@ -203,8 +229,19 @@
       <div id="raw">点左侧一步，查看这一步做了什么。</div>
     </div>
   </section>
+  <script src="/render-md.js"></script>
+  <script src="/mermaid.min.js"></script>
   <script>
     const params = new URLSearchParams(location.search);
+    const diagramSvg = new Map();
+    if (window.mermaid) {
+      mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: "strict",
+        theme: "neutral",
+        fontFamily: '"Segoe UI", "Microsoft YaHei", sans-serif',
+      });
+    }
     const state = {
       chatId: params.get("chat") || "",
       cwd: "",
@@ -587,16 +624,96 @@
       return null;
     }
 
+    const renderModeButton = document.querySelector("#render-mode");
+    let richView = localStorage.getItem("webai-render") !== "plain";
+
+    function syncRenderModeButton() {
+      renderModeButton.textContent = richView ? "图形化" : "纯文本";
+      renderModeButton.setAttribute("aria-pressed", richView ? "true" : "false");
+      renderModeButton.title = richView ? "当前是图形化阅读，点击改为纯文本" : "当前是纯文本，点击改为图形化阅读";
+    }
+
+    function paintMessage(body) {
+      const text = body.dataset.raw || "";
+      const bubble = body.closest(".bubble");
+      body.classList.add("reply");
+      if (!richView) {
+        body.classList.remove("md");
+        body.classList.add("plain");
+        if (bubble) bubble.classList.remove("rich");
+        delete body.dataset.html;
+        body.textContent = text;
+        return;
+      }
+      body.classList.remove("plain");
+      body.classList.add("md");
+      if (bubble) bubble.classList.add("rich");
+      const html = renderMarkdown(text);
+      if (body.dataset.html === html) return;
+      body.dataset.html = html;
+      body.innerHTML = html;
+      drawDiagrams(body);
+    }
+
+    function setRichView(next) {
+      richView = next;
+      localStorage.setItem("webai-render", next ? "rich" : "plain");
+      syncRenderModeButton();
+      for (const body of thread.querySelectorAll(".reply")) paintMessage(body);
+    }
+
+    renderModeButton.addEventListener("click", () => setRichView(!richView));
+    syncRenderModeButton();
+
+    async function drawDiagrams(root) {
+      if (!window.mermaid) return;
+      const nodes = [...root.querySelectorAll(".mermaid")];
+      for (const node of nodes) {
+        const code = node.textContent.trim();
+        if (!code) continue;
+        if (diagramSvg.has(code)) {
+          if (node.dataset.drawn === code) continue;
+          node.innerHTML = diagramSvg.get(code);
+          node.dataset.drawn = code;
+          continue;
+        }
+        if (node.dataset.pending === code) continue;
+        node.dataset.pending = code;
+        try {
+          const id = "mmd" + Math.random().toString(36).slice(2);
+          const rendered = await mermaid.render(id, code);
+          diagramSvg.set(code, rendered.svg);
+          if (!node.isConnected || node.dataset.pending !== code) continue;
+          node.innerHTML = rendered.svg;
+          node.dataset.drawn = code;
+        } catch (error) {
+          if (!node.isConnected || node.dataset.pending !== code) continue;
+          const pre = document.createElement("pre");
+          const source = document.createElement("code");
+          source.textContent = code;
+          pre.append(source);
+          const note = document.createElement("p");
+          note.className = "note";
+          note.textContent = "图形没有画出来：" + (error && error.message ? error.message : error);
+          node.replaceChildren(pre, note);
+          node.dataset.drawn = code;
+        }
+      }
+    }
+
     function absorbAssistant(text, fresh) {
       const bubble = lastAnswerBubble();
-      const target = bubble ? bubble.lastElementChild : null;
+      const target = bubble ? bubble.querySelector(".reply") : null;
+      const raw = target ? target.dataset.raw || "" : "";
       if (!target || fresh) {
         addBubble("Cursor", text, "answer");
-      } else if (text.startsWith(target.textContent)) {
-        target.textContent = text;
+      } else if (text.startsWith(raw)) {
+        target.dataset.raw = text;
+        paintMessage(target);
         bubble.classList.add("answer");
-      } else if (!target.textContent.startsWith(text)) {
-        target.textContent += text;
+      } else if (!raw.startsWith(text)) {
+        target.dataset.raw = raw + text;
+        paintMessage(target);
         bubble.classList.add("answer");
       }
       thread.scrollTop = thread.scrollHeight;
@@ -607,13 +724,19 @@
         addTurnMarker(text);
         setPrompt(text);
       }
+      const reply = who === "Cursor";
       const bubble = document.createElement("article");
       bubble.className = "bubble" + (kind ? " " + kind : "");
       const name = document.createElement("span");
       name.className = "who";
       name.textContent = who;
-      const body = document.createElement("span");
-      body.textContent = text;
+      const body = document.createElement(reply ? "div" : "span");
+      if (reply) {
+        body.dataset.raw = text;
+        paintMessage(body);
+      } else {
+        body.textContent = text;
+      }
       bubble.append(name, body);
       thread.append(bubble);
       return body;
@@ -960,18 +1083,36 @@
       }
     }
 
+    let seenChatIds = null;
+
+    function followChat(chatId) {
+      state.chatId = chatId;
+      state.viewKey = "";
+      state.pendingQuestion = "";
+      state.steps = [];
+      state.selectedStep = 0;
+      state.running = false;
+      history.replaceState(null, "", "/?chat=" + chatId);
+      refresh();
+    }
+
     async function loadState() {
       const response = await fetch("/api/state");
       const json = await response.json();
+      const chats = json.chats || [];
       if (!state.chatId) {
         state.chatId = json.activeChatId || "";
         if (state.chatId) history.replaceState(null, "", "/?chat=" + state.chatId);
+      } else if (seenChatIds && !state.running) {
+        const arrived = chats.find((chat) => chat.chatId && !seenChatIds.has(chat.chatId));
+        if (arrived && arrived.chatId !== state.chatId) followChat(arrived.chatId);
       }
+      seenChatIds = new Set(chats.map((chat) => chat.chatId));
       state.remoteRunning = (json.runningChatIds || []).includes(state.chatId);
       const cancel = document.querySelector("#cancel");
       if (cancel) cancel.hidden = !(state.running || state.remoteRunning);
       sessions.replaceChildren();
-      for (const chat of json.chats || []) {
+      for (const chat of chats) {
         const item = document.createElement("li");
         const button = document.createElement("button");
         button.type = "button";

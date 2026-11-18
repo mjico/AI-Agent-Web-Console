@@ -4,6 +4,23 @@
 
 Windows 和 Linux 的包装命令不同。Windows 仍使用 `agent`，只监听本机，打开网页不需要密码。Linux 使用 `cursor-web`，避免和 Cursor 自带的 `agent` 冲突；服务监听所有网卡，第一次打开网页要设置密码。
 
+Cursor 的回复默认按 Markdown 显示：标题、列表、表格、代码块，以及用 Mermaid 画的流程图、时序图、类图、状态图。页头的「图形化 / 纯文本」按钮可以在两种阅读方式之间切换，选择会留在这个浏览器里。图要放在 `mermaid` 代码块里，例如：
+
+````text
+```mermaid
+flowchart TD
+  A[开始] --> B[结束]
+```
+````
+
+````text
+```mermaid
+sequenceDiagram
+  用户->>WebAI: 提问
+  WebAI-->>用户: 回答
+```
+````
+
 ## Windows
 
 `D:\AI_Proj\webAI\bin` 放在用户 PATH 最前面。在任意目录执行：

@@ -14,7 +14,21 @@ find_node() {
     if [[ -x "$home/bin/node" ]]; then printf "%s" "$home/bin/node"; return; fi
     if [[ -x "$home/node" ]]; then printf "%s" "$home/node"; return; fi
   fi
-  command -v node || true
+  local found=""
+  found="$(command -v node || true)"
+  if [[ -n "$found" && -x "$found" ]]; then printf "%s" "$found"; return; fi
+  local agent_bin="${1:-}"
+  if [[ -n "$agent_bin" ]]; then
+    local agent_dir
+    agent_dir="$(dirname "$(readlink -f "$agent_bin" 2>/dev/null || printf "%s" "$agent_bin")")"
+    if [[ -x "$agent_dir/node" ]]; then printf "%s" "$agent_dir/node"; return; fi
+  fi
+  local versions="$HOME/.local/share/cursor-agent/versions"
+  if [[ -d "$versions" ]]; then
+    local newest=""
+    newest="$(find "$versions" -mindepth 2 -maxdepth 2 -type f -name node -executable 2>/dev/null | sort | tail -n 1)"
+    if [[ -n "$newest" ]]; then printf "%s" "$newest"; return; fi
+  fi
 }
 
 find_agent() {
@@ -37,8 +51,8 @@ port_open() {
   (echo >/dev/tcp/127.0.0.1/3080) >/dev/null 2>&1
 }
 
-NODE="$(find_node)"
 REAL="$(find_agent)"
+NODE="$(find_node "$REAL")"
 if [[ -z "$REAL" || ! -e "$REAL" ]]; then
   echo "Cursor CLI not found. Set CURSOR_AGENT_BIN or install ~/.local/bin/agent" >&2
   exit 1
@@ -172,6 +186,9 @@ else
 fi
 
 launch="${WEB_AI_LAUNCH:-${TMPDIR:-/tmp}/webai-launch-$$.txt}"
+if [[ "$mode" == "resume" && -n "$id" && -z "$NODE" ]]; then
+  echo "找不到 Node，网页不会附着这次会话。可设置 WEB_AI_NODE。" >&2
+fi
 if [[ "$mode" == "resume" && -n "$id" && -n "$NODE" ]]; then
   "$NODE" - "$ROOT" "$cwd" "$id" <<'NODE' || true
 const fs = require("fs");
