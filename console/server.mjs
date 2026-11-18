@@ -20,6 +20,7 @@ const chatIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
 
 const sessions = new Map();
 const running = new Map();
+const turnEmit = new Map();
 const transcriptCache = new Map();
 const HISTORY_LIMIT = 20;
 const MESSAGE_CHARS = 4000;
@@ -83,6 +84,7 @@ function sessionOf(chatId) {
       usage: saved?.usage || emptyUsage(),
       live: [],
       steps: [],
+      steers: [],
     };
     sessions.set(chatId, session);
   }
@@ -997,7 +999,7 @@ function handleStreamLine(session, line, emit) {
     pushStep(session.steps, resultStep);
     emit({ type: "step", step: resultStep });
     emit({ type: "usage", usage: session.usage, turn: event.usage || null });
-    emit({ type: "done", ok: !failed, message });
+    session.turnResult = { ok: !failed, message };
   }
 }
 
@@ -1010,6 +1012,8 @@ function startTurn(chatId, cwd, text, res) {
   session.assistantBreak = false;
   session.note = "";
   session.pendingChoice = null;
+  session.steers = [];
+  session.turnResult = null;
   session.live.push({ role: "user", text });
   rememberChat(chatId, session.cwd);
   res.writeHead(200, {
@@ -1019,53 +1023,73 @@ function startTurn(chatId, cwd, text, res) {
   const emit = (event) => {
     res.write(`${JSON.stringify(event)}\n`);
   };
+  turnEmit.set(chatId, emit);
   emit({ type: "status", status: "running" });
   emit({ type: "user", text });
-  const child = runCli(chatId, session.cwd, text);
-  running.set(chatId, child);
-  let buffer = "";
   let finished = false;
   const finish = (ok, message) => {
     if (finished) return;
     finished = true;
-    if (running.get(chatId) === child) running.delete(chatId);
+    running.delete(chatId);
+    turnEmit.delete(chatId);
+    session.steers = [];
     if (session.status === "running") session.status = ok ? "idle" : "failed";
     session.tool = "";
-    if (child.cancelled) session.status = "idle";
-    if (!ok && message && !child.cancelled) emit({ type: "error", message });
+    if (session.cancelled) session.status = "idle";
+    if (!ok && message && !session.cancelled && !session.turnResult) emit({ type: "error", message });
     emit({ type: "status", status: session.status });
-    if (child.cancelled) emit({ type: "done", ok: false, cancelled: true, message: "已终止" });
+    if (session.cancelled) emit({ type: "done", ok: false, cancelled: true, message: "已终止" });
+    else if (session.turnResult) emit({ type: "done", ok: session.turnResult.ok, message: session.turnResult.message || "" });
     res.end();
   };
-  child.stdout.on("data", (chunk) => {
-    buffer += chunk.toString("utf8");
-    let nl = buffer.indexOf("\n");
-    while (nl >= 0) {
-      const line = buffer.slice(0, nl).trim();
-      buffer = buffer.slice(nl + 1);
-      if (line) handleStreamLine(session, line, emit);
-      nl = buffer.indexOf("\n");
-    }
-  });
-  let errorText = "";
-  child.stderr.on("data", (chunk) => {
-    errorText += chunk.toString("utf8");
-  });
-  child.on("exit", (code) => {
-    if (child.cancelled) {
-      session.status = "idle";
-      session.note = "已终止";
-      finish(false, "已终止");
-      return;
-    }
-    if (buffer.trim()) handleStreamLine(session, buffer.trim(), emit);
-    if (code && session.status !== "failed" && session.status !== "idle") {
-      finish(false, errorText.trim() || `CLI 退出码 ${code}`);
-      return;
-    }
-    finish(session.status !== "failed", "");
-  });
-  child.on("error", (error) => finish(false, error.message));
+  const launch = (prompt) => {
+    const child = runCli(chatId, session.cwd, prompt);
+    running.set(chatId, child);
+    let buffer = "";
+    let errorText = "";
+    child.stdout.on("data", (chunk) => {
+      buffer += chunk.toString("utf8");
+      let nl = buffer.indexOf("\n");
+      while (nl >= 0) {
+        const line = buffer.slice(0, nl).trim();
+        buffer = buffer.slice(nl + 1);
+        if (line) handleStreamLine(session, line, emit);
+        nl = buffer.indexOf("\n");
+      }
+    });
+    child.stderr.on("data", (chunk) => {
+      errorText += chunk.toString("utf8");
+    });
+    child.on("exit", (code) => {
+      if (running.get(chatId) !== child) return;
+      if (child.cancelled || session.cancelled) {
+        session.status = "idle";
+        session.note = "已终止";
+        finish(false, "已终止");
+        return;
+      }
+      if (buffer.trim()) handleStreamLine(session, buffer.trim(), emit);
+      const next = Array.isArray(session.steers) ? session.steers.shift() : "";
+      if (next) {
+        session.status = "running";
+        session.tool = "";
+        session.assistantBreak = true;
+        session.turnResult = null;
+        launch(next);
+        return;
+      }
+      if (code && session.status !== "failed" && session.status !== "idle") {
+        finish(false, errorText.trim() || `CLI 退出码 ${code}`);
+        return;
+      }
+      finish(session.status !== "failed", "");
+    });
+    child.on("error", (error) => {
+      if (running.get(chatId) !== child && running.get(chatId)) return;
+      finish(false, error.message);
+    });
+  };
+  launch(text);
 }
 
 const server = http.createServer(async (req, res) => {
@@ -1211,6 +1235,26 @@ const server = http.createServer(async (req, res) => {
         child.kill("SIGTERM");
       }
       sendJson(res, 200, { ok: true, stopped: true });
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/steer") {
+      const body = await readBody(req);
+      const text = typeof body.text === "string" ? body.text.trim() : "";
+      if (!chatIdPattern.test(body.chatId || "") || !text) {
+        sendJson(res, 400, { ok: false, message: "需要 chatId 和 text。" });
+        return;
+      }
+      const emit = turnEmit.get(body.chatId);
+      if (!emit || !running.has(body.chatId)) {
+        sendJson(res, 409, { ok: false, message: "当前没有可插入的处理" });
+        return;
+      }
+      const session = sessionOf(body.chatId);
+      if (!Array.isArray(session.steers)) session.steers = [];
+      session.steers.push(text);
+      session.live.push({ role: "user", text });
+      emit({ type: "steer", text });
+      sendJson(res, 200, { ok: true });
       return;
     }
     if (req.method === "POST" && url.pathname === "/api/message") {

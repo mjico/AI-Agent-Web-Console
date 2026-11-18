@@ -796,10 +796,12 @@
       syncInputHistory(entries);
       const pending = state.pendingQuestion.trim();
       if (pending) {
-        const lastUser = [...entries].reverse().find((entry) => entry.type === "user");
-        const shown = String(lastUser && lastUser.text || "").trim();
-        const clipped = shown.replace(/\n…（已截断）$/, "");
-        const kept = shown === pending || shown.startsWith(pending) || (shown !== clipped && pending.startsWith(clipped));
+        const kept = entries.some((entry) => {
+          if (entry.type !== "user") return false;
+          const shown = String(entry.text || "").trim();
+          const clipped = shown.replace(/\n…（已截断）$/, "");
+          return shown === pending || shown.startsWith(pending) || (shown !== clipped && pending.startsWith(clipped));
+        });
         if (kept) state.pendingQuestion = "";
         else {
           addBubble("你", state.pendingQuestion, "user");
@@ -1226,6 +1228,10 @@
         const item = document.createElement("li");
         const label = document.createElement("span");
         label.textContent = "等待 " + (index + 1) + " · " + text.replace(/\s+/g, " ");
+        const insert = document.createElement("button");
+        insert.type = "button";
+        insert.textContent = "插入";
+        insert.addEventListener("click", () => insertQueued(index));
         const remove = document.createElement("button");
         remove.type = "button";
         remove.textContent = "移除";
@@ -1233,7 +1239,7 @@
           chatQueue().splice(index, 1);
           renderQueue();
         });
-        item.append(label, remove);
+        item.append(label, insert, remove);
         list.append(item);
       });
     }
@@ -1250,6 +1256,35 @@
       rememberInput(text);
       chatQueue().push(text);
       renderQueue();
+    }
+
+    async function insertQueued(index) {
+      const queue = chatQueue();
+      const text = queue[index];
+      if (!text || !state.chatId) return;
+      queue.splice(index, 1);
+      renderQueue();
+      if (!state.running && !state.remoteRunning) {
+        sendText(text);
+        return;
+      }
+      try {
+        const response = await fetch("/api/steer", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ chatId: state.chatId, text }),
+        });
+        if (!response.ok) {
+          queue.splice(Math.min(index, queue.length), 0, text);
+          renderQueue();
+          const json = await response.json().catch(() => ({}));
+          setStatus(json.message || "无法插入", state.running || state.remoteRunning ? "run" : "fail");
+        }
+      } catch (error) {
+        queue.splice(Math.min(index, queue.length), 0, text);
+        renderQueue();
+        setStatus(error.message || "无法插入", "fail");
+      }
     }
 
     function drainQueue() {
@@ -1335,6 +1370,10 @@
               if (item.type === "step") {
                 rememberStep(item.step);
                 upsertActivity(item.step);
+              }
+              if (item.type === "steer" && item.text) {
+                addBubble("你", item.text, "user");
+                thread.scrollTop = thread.scrollHeight;
               }
               if (item.type === "assistant" && item.text) absorbAssistant(item.text, item.fresh);
               if (item.type === "choice") showChoice(item.choice);
