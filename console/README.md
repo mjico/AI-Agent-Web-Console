@@ -42,6 +42,10 @@ http://127.0.0.1:3080/?chat=<id>
 
 也可以双击 `D:\AI_Proj\webAI\start-console.cmd`，只开网页、不启动 CLI。Windows 上的网页只监听 `127.0.0.1:3080`，不启用密码。
 
+网页左侧「新开会话」可以直接选工作目录并开启 Agent：点「浏览」用本机文件夹对话框，或自己填路径，再点「开启 Agent」。如果这个目录已经有旧会话，页面会先提示「使用旧的」或「新建」；选旧的会附着到最近那条，选新建才会再调 Cursor CLI 的 `create-chat`。无需再开命令行。
+
+左侧「附着过的会话」按目录折叠。点「移除」只是从网页列表拿掉，不删除 Cursor 里的对话；以后对同一目录再开，仍可选「使用旧的」。不用的会话也可以一直放着不管。
+
 ## Linux
 
 Linux 不使用 `bin/agent`。包装命令是 `bin/cursor-web`，它调用本机的 `~/.local/bin/agent`（也可用环境变量 `CURSOR_AGENT_BIN` 指定），不会替换 Cursor 自带的 `agent`。

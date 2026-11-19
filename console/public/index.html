@@ -50,8 +50,28 @@
     button.secondary, .sessions button { background: transparent; color: var(--ink); border: 1px solid transparent; }
     button:disabled { opacity: 0.55; cursor: wait; }
     .sessions { list-style: none; margin: 8px 0 0; padding: 0; }
-    .sessions button { width: 100%; margin: 0 0 6px; text-align: left; }
-    .sessions button.active, .sessions button:hover { border-color: var(--line); background: #f7f3ec; }
+    .sessions > li { margin: 0 0 8px; }
+    .sessions .group-head {
+      display: grid; grid-template-columns: auto 1fr auto; gap: 6px; align-items: center;
+      width: 100%; margin: 0 0 4px; text-align: left; background: transparent; color: var(--ink);
+      border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px;
+    }
+    .sessions .group-head:hover, .sessions .group-head.open { background: #f7f3ec; }
+    .sessions .group-head .mark { color: var(--muted); font-family: Consolas, "Cascadia Mono", monospace; }
+    .sessions .group-head .path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+    .sessions .group-head .count { color: var(--muted); font-size: 12px; }
+    .sessions .group-body { list-style: none; margin: 0; padding: 0 0 0 8px; }
+    .sessions .group-body[hidden] { display: none; }
+    .sessions .chat-row { display: grid; grid-template-columns: 1fr auto; gap: 4px; align-items: center; margin: 0 0 4px; }
+    .sessions .chat-row button.open {
+      width: 100%; min-width: 0; margin: 0; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .sessions .chat-row button.open.active, .sessions .chat-row button.open:hover { border-color: var(--line); background: #f7f3ec; }
+    .sessions .chat-row button.detach {
+      width: auto; margin: 0; padding: 4px 6px; font-size: 12px; color: var(--muted); border: 1px solid transparent;
+    }
+    .sessions .chat-row button.detach:hover { color: var(--fail); border-color: #f3c2c8; background: var(--fail-bg); }
+    .sessions-note { margin: 4px 0 0; }
     .tools { list-style: none; margin: 0; padding: 0; }
     .tools button, .steps button, .monitor-open { width: 100%; margin: 0 0 6px; text-align: left; background: transparent; color: var(--ink); border: 1px solid transparent; }
     .tools button:hover, .steps button:hover, .steps button.active, .monitor-open:hover { border-color: var(--line); background: #f7f3ec; }
@@ -164,6 +184,22 @@
     .queue li { display: flex; gap: 8px; align-items: center; margin: 0 0 4px; }
     .queue span { flex: 1; overflow: hidden; color: var(--muted); font-size: 13px; white-space: nowrap; text-overflow: ellipsis; }
     .queue button { background: transparent; color: var(--ink); border: 1px solid var(--line); padding: 2px 8px; }
+    .new-chat { display: grid; gap: 6px; margin: 0 0 12px; }
+    .new-chat .path-row { display: grid; grid-template-columns: 1fr auto; gap: 6px; }
+    .new-chat input {
+      width: 100%; min-width: 0; font: inherit; color: var(--ink);
+      border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; background: #fff;
+    }
+    .new-chat button { background: transparent; color: var(--ink); border: 1px solid var(--line); padding: 6px 8px; }
+    .new-chat button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .new-chat button:disabled { opacity: 0.6; }
+    .new-chat .hint { margin: 0; }
+    .create-choice {
+      display: grid; gap: 6px; padding: 8px; border: 1px dashed var(--line); border-radius: 8px; background: #f7f3ec;
+    }
+    .create-choice[hidden] { display: none; }
+    .create-choice .actions-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .create-choice .meta { margin: 0; color: var(--muted); font-size: 12px; }
     .composer { display: grid; grid-template-columns: 1fr auto; gap: 8px; padding: 12px 18px 18px; }
     .actions { display: flex; flex-direction: column; gap: 8px; }
     #send, #cancel { display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 76px; line-height: 1.2; }
@@ -193,7 +229,24 @@
       <p id="tool" class="note">当前没有工具调用</p>
       <ul id="tools" class="tools"></ul>
       <p id="sync" class="note"></p>
+      <label>新开会话</label>
+      <div class="new-chat">
+        <div class="path-row">
+          <input id="new-cwd" type="text" placeholder="工作目录，例如 D:\AI_Proj\hello_world" autocomplete="off" spellcheck="false">
+          <button type="button" id="pick-cwd">浏览</button>
+        </div>
+        <button type="button" id="create-chat" class="primary">开启 Agent</button>
+        <div id="create-choice" class="create-choice" hidden>
+          <p id="create-choice-text" class="meta"></p>
+          <div class="actions-row">
+            <button type="button" id="reuse-chat" class="primary">使用旧的</button>
+            <button type="button" id="force-new-chat">新建</button>
+          </div>
+        </div>
+        <p id="create-note" class="note hint"></p>
+      </div>
       <label>附着过的会话</label>
+      <p class="note sessions-note">同目录会折叠。移除只是离开网页列表，Cursor 对话还在，以后还能再附着。</p>
       <ul id="sessions" class="sessions"></ul>
     </aside>
     <section class="chat">
@@ -261,6 +314,7 @@
       dismissedChoiceId: "",
       queues: {},
       remoteRunning: false,
+      groupOpen: {},
     };
     const OTHER = "__other__";
 
@@ -1091,11 +1145,169 @@
       state.chatId = chatId;
       state.viewKey = "";
       state.pendingQuestion = "";
+      state.inputHistory = [];
+      state.historyCursor = -1;
+      state.historyDraft = "";
+      state.choice = null;
+      state.dismissedChoiceId = "";
+      renderChoices();
+      renderQueue();
       state.steps = [];
       state.selectedStep = 0;
       state.running = false;
+      document.querySelector("#cancel").hidden = true;
       history.replaceState(null, "", "/?chat=" + chatId);
       refresh();
+    }
+
+    let pendingCreate = null;
+
+    function setCreateNote(text, fail) {
+      const note = document.querySelector("#create-note");
+      note.textContent = text || "";
+      note.style.color = fail ? "var(--fail)" : "";
+    }
+
+    function hideCreateChoice() {
+      pendingCreate = null;
+      const panel = document.querySelector("#create-choice");
+      if (panel) panel.hidden = true;
+    }
+
+    function showCreateChoice(cwd, chats) {
+      const list = Array.isArray(chats) ? chats.filter((item) => item && item.chatId) : [];
+      if (!list.length) {
+        hideCreateChoice();
+        return;
+      }
+      pendingCreate = { cwd, chatId: list[0].chatId, chats: list };
+      const panel = document.querySelector("#create-choice");
+      const text = document.querySelector("#create-choice-text");
+      const turns = list[0].usage && list[0].usage.turns ? list[0].usage.turns + " 轮" : "尚无对话";
+      const extra = list.length > 1 ? "，另有 " + (list.length - 1) + " 条同目录会话" : "";
+      text.textContent = "已有 " + list[0].chatId.slice(0, 8) + "（" + turns + "）" + extra + "。用旧的还是新建？";
+      panel.hidden = false;
+    }
+
+    async function pickCwd() {
+      const box = document.querySelector("#new-cwd");
+      const pick = document.querySelector("#pick-cwd");
+      hideCreateChoice();
+      pick.disabled = true;
+      setCreateNote("正在打开文件夹选择…");
+      try {
+        const response = await fetch("/api/pick-folder", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ cwd: box.value.trim() || state.cwd || "" }),
+        });
+        const json = await response.json();
+        if (json.cancelled) {
+          setCreateNote("");
+          return;
+        }
+        if (!response.ok || !json.ok) {
+          setCreateNote(json.message || "没有选择文件夹。", true);
+          return;
+        }
+        box.value = json.cwd || "";
+        setCreateNote("");
+      } catch (error) {
+        setCreateNote(error.message || "无法打开文件夹选择。", true);
+      } finally {
+        pick.disabled = false;
+      }
+    }
+
+    async function reuseExistingChat() {
+      if (!pendingCreate || !pendingCreate.chatId) return;
+      const box = document.querySelector("#new-cwd");
+      const button = document.querySelector("#create-chat");
+      const pick = document.querySelector("#pick-cwd");
+      const reuse = document.querySelector("#reuse-chat");
+      const force = document.querySelector("#force-new-chat");
+      const cwd = pendingCreate.cwd;
+      const chatId = pendingCreate.chatId;
+      button.disabled = true;
+      pick.disabled = true;
+      reuse.disabled = true;
+      force.disabled = true;
+      setCreateNote("正在附着旧会话…");
+      try {
+        const response = await fetch("/api/attach", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ chatId, cwd }),
+        });
+        const json = await response.json();
+        if (!response.ok || !json.ok) {
+          setCreateNote(json.message || "附着失败。", true);
+          return;
+        }
+        box.value = json.cwd || cwd;
+        hideCreateChoice();
+        setCreateNote("已继续 " + chatId.slice(0, 8));
+        followChat(chatId);
+        await loadState();
+      } catch (error) {
+        setCreateNote(error.message || "附着失败。", true);
+      } finally {
+        button.disabled = false;
+        pick.disabled = false;
+        reuse.disabled = false;
+        force.disabled = false;
+      }
+    }
+
+    async function createChatFromPage(forceNew) {
+      const box = document.querySelector("#new-cwd");
+      const button = document.querySelector("#create-chat");
+      const pick = document.querySelector("#pick-cwd");
+      const reuse = document.querySelector("#reuse-chat");
+      const force = document.querySelector("#force-new-chat");
+      const cwd = (pendingCreate && forceNew ? pendingCreate.cwd : box.value.trim());
+      if (!cwd) {
+        hideCreateChoice();
+        setCreateNote("请先填写或浏览工作目录。", true);
+        box.focus();
+        return;
+      }
+      if (!forceNew) hideCreateChoice();
+      button.disabled = true;
+      pick.disabled = true;
+      if (reuse) reuse.disabled = true;
+      if (force) force.disabled = true;
+      setCreateNote(forceNew ? "正在创建新会话…" : "正在检查目录…");
+      try {
+        const response = await fetch("/api/create", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ cwd, forceNew: Boolean(forceNew) }),
+        });
+        const json = await response.json();
+        if (json.existing && json.chatId) {
+          box.value = json.cwd || cwd;
+          showCreateChoice(json.cwd || cwd, json.chats || [{ chatId: json.chatId, usage: {} }]);
+          setCreateNote("");
+          return;
+        }
+        if (!response.ok || !json.ok || !json.chatId) {
+          setCreateNote(json.message || "创建失败。", true);
+          return;
+        }
+        box.value = json.cwd || cwd;
+        hideCreateChoice();
+        setCreateNote("已开启 " + json.chatId.slice(0, 8));
+        followChat(json.chatId);
+        await loadState();
+      } catch (error) {
+        setCreateNote(error.message || "创建失败。", true);
+      } finally {
+        button.disabled = false;
+        pick.disabled = false;
+        if (reuse) reuse.disabled = false;
+        if (force) force.disabled = false;
+      }
     }
 
     async function loadState() {
@@ -1113,37 +1325,137 @@
       state.remoteRunning = (json.runningChatIds || []).includes(state.chatId);
       const cancel = document.querySelector("#cancel");
       if (cancel) cancel.hidden = !(state.running || state.remoteRunning);
-      sessions.replaceChildren();
-      for (const chat of chats) {
-        const item = document.createElement("li");
-        const button = document.createElement("button");
-        button.type = "button";
-        const busy = (json.runningChatIds || []).includes(chat.chatId);
-        button.className = chat.chatId === state.chatId ? "active" : "";
-        button.textContent = (busy ? "处理中 · " : "") + chat.chatId.slice(0, 8) + " · " + (chat.cwd || "");
-        button.addEventListener("click", () => {
-          state.chatId = chat.chatId;
+      renderSessionGroups(chats, json.runningChatIds || []);
+      if (!state.running && !state.remoteRunning) drainQueue();
+    }
+
+    function cwdKey(cwd) {
+      return String(cwd || "（未设置目录）");
+    }
+
+    function shortCwd(cwd) {
+      const text = String(cwd || "（未设置目录）");
+      const parts = text.replace(/[\\/]+$/, "").split(/[\\/]/);
+      if (parts.length <= 2) return text;
+      return parts.slice(-2).join("\\");
+    }
+
+    function isGroupOpen(cwd, chats) {
+      const key = cwdKey(cwd);
+      if (Object.prototype.hasOwnProperty.call(state.groupOpen, key)) return state.groupOpen[key];
+      return chats.some((chat) => chat.chatId === state.chatId);
+    }
+
+    function selectChat(chatId) {
+      state.chatId = chatId;
+      state.viewKey = "";
+      state.pendingQuestion = "";
+      state.inputHistory = [];
+      state.historyCursor = -1;
+      state.historyDraft = "";
+      state.choice = null;
+      state.dismissedChoiceId = "";
+      renderChoices();
+      renderQueue();
+      state.steps = [];
+      state.selectedStep = 0;
+      state.running = false;
+      document.querySelector("#cancel").hidden = true;
+      history.replaceState(null, "", "/?chat=" + chatId);
+      refresh();
+      loadState();
+    }
+
+    async function detachChat(chatId) {
+      if (!chatId) return;
+      try {
+        const response = await fetch("/api/detach", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ chatId }),
+        });
+        const json = await response.json();
+        if (!response.ok || !json.ok) {
+          setCreateNote(json.message || "无法移除。", true);
+          return;
+        }
+        if (state.chatId === chatId) {
+          state.chatId = json.activeChatId || "";
           state.viewKey = "";
           state.pendingQuestion = "";
-          state.inputHistory = [];
-          state.historyCursor = -1;
-          state.historyDraft = "";
-          state.choice = null;
-          state.dismissedChoiceId = "";
-          renderChoices();
-          renderQueue();
-          state.steps = [];
-          state.selectedStep = 0;
-          state.running = false;
-          document.querySelector("#cancel").hidden = true;
-          history.replaceState(null, "", "/?chat=" + chat.chatId);
-          refresh();
-          loadState();
+          if (state.chatId) history.replaceState(null, "", "/?chat=" + state.chatId);
+          else history.replaceState(null, "", "/");
+        }
+        await loadState();
+        if (state.chatId) await refresh();
+        else {
+          meta.textContent = "等待附着到 Cursor CLI 会话";
+          thread.replaceChildren();
+          setPrompt("");
+        }
+      } catch (error) {
+        setCreateNote(error.message || "无法移除。", true);
+      }
+    }
+
+    function renderSessionGroups(chats, runningIds) {
+      const groups = new Map();
+      for (const chat of chats) {
+        const key = cwdKey(chat.cwd);
+        if (!groups.has(key)) groups.set(key, { cwd: chat.cwd || "（未设置目录）", chats: [] });
+        groups.get(key).chats.push(chat);
+      }
+      sessions.replaceChildren();
+      for (const group of groups.values()) {
+        const open = isGroupOpen(group.cwd, group.chats);
+        const item = document.createElement("li");
+        const head = document.createElement("button");
+        head.type = "button";
+        head.className = "group-head" + (open ? " open" : "");
+        const mark = document.createElement("span");
+        mark.className = "mark";
+        mark.textContent = open ? "▼" : "▶";
+        const pathLabel = document.createElement("span");
+        pathLabel.className = "path";
+        pathLabel.title = group.cwd;
+        pathLabel.textContent = shortCwd(group.cwd);
+        const count = document.createElement("span");
+        count.className = "count";
+        const busyCount = group.chats.filter((chat) => runningIds.includes(chat.chatId)).length;
+        count.textContent = busyCount ? group.chats.length + " · 忙" : String(group.chats.length);
+        head.append(mark, pathLabel, count);
+        head.addEventListener("click", () => {
+          state.groupOpen[cwdKey(group.cwd)] = !open;
+          renderSessionGroups(chats, runningIds);
         });
-        item.append(button);
+        const body = document.createElement("ul");
+        body.className = "group-body";
+        body.hidden = !open;
+        for (const chat of group.chats) {
+          const row = document.createElement("li");
+          row.className = "chat-row";
+          const openBtn = document.createElement("button");
+          openBtn.type = "button";
+          openBtn.className = "open" + (chat.chatId === state.chatId ? " active" : "");
+          const busy = runningIds.includes(chat.chatId);
+          openBtn.textContent = (busy ? "处理中 · " : "") + chat.chatId.slice(0, 8);
+          openBtn.title = chat.chatId;
+          openBtn.addEventListener("click", () => selectChat(chat.chatId));
+          const detach = document.createElement("button");
+          detach.type = "button";
+          detach.className = "detach";
+          detach.textContent = "移除";
+          detach.title = "从网页列表移除，不删除 Cursor 对话";
+          detach.addEventListener("click", (event) => {
+            event.stopPropagation();
+            detachChat(chat.chatId);
+          });
+          row.append(openBtn, detach);
+          body.append(row);
+        }
+        item.append(head, body);
         sessions.append(item);
       }
-      if (!state.running && !state.remoteRunning) drainQueue();
     }
 
     async function refresh() {
@@ -1421,6 +1733,17 @@
       sendText(text);
     });
     document.querySelector("#cancel").addEventListener("click", () => cancelTurn());
+    document.querySelector("#pick-cwd").addEventListener("click", () => pickCwd());
+    document.querySelector("#create-chat").addEventListener("click", () => createChatFromPage(false));
+    document.querySelector("#reuse-chat").addEventListener("click", () => reuseExistingChat());
+    document.querySelector("#force-new-chat").addEventListener("click", () => createChatFromPage(true));
+    document.querySelector("#new-cwd").addEventListener("input", () => hideCreateChoice());
+    document.querySelector("#new-cwd").addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.altKey && !event.ctrlKey && !event.metaKey) {
+        event.preventDefault();
+        createChatFromPage(false);
+      }
+    });
 
     document.querySelector("#open-monitor").addEventListener("click", () => openMonitor());
     document.querySelector("#close-monitor").addEventListener("click", () => { monitor.hidden = true; });

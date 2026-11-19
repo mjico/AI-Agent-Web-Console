@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const publicDir = path.join(root, "console", "public");
 const statePath = path.join(root, "console", "cli-sessions.json");
+const cwdIndexPath = path.join(root, "console", "last-by-cwd.json");
 const authPath = path.join(root, "console", "auth.json");
 const uiPort = 3080;
 const listenHost = process.platform === "win32" ? "127.0.0.1" : "0.0.0.0";
@@ -277,7 +278,217 @@ function rememberChat(chatId, cwd) {
     updatedAt: now,
   });
   saveState({ activeChatId: chatId, chats: chats.slice(0, 40) });
+  if (session.cwd) rememberCwd(chatId, session.cwd);
   return session;
+}
+
+function forgetChat(chatId) {
+  if (running.has(chatId)) {
+    return { ok: false, message: "这条会话还在处理，先终止再移除。" };
+  }
+  const state = loadState();
+  const chats = (state.chats || []).filter((item) => item.chatId !== chatId);
+  let activeChatId = state.activeChatId;
+  if (activeChatId === chatId) activeChatId = chats[0]?.chatId || null;
+  saveState({ activeChatId, chats });
+  sessions.delete(chatId);
+  return { ok: true, activeChatId, chats };
+}
+
+function sameCwd(left, right) {
+  try {
+    const a = path.resolve(left);
+    const b = path.resolve(right);
+    if (process.platform === "win32") return a.toLowerCase() === b.toLowerCase();
+    return a === b;
+  } catch {
+    return false;
+  }
+}
+
+function findChatsForCwd(cwd) {
+  const resolved = path.resolve(cwd);
+  const seen = new Set();
+  const chats = [];
+  for (const item of loadState().chats || []) {
+    if (!item?.chatId || !item?.cwd || !chatIdPattern.test(item.chatId)) continue;
+    if (!sameCwd(item.cwd, resolved)) continue;
+    if (seen.has(item.chatId)) continue;
+    seen.add(item.chatId);
+    chats.push({
+      chatId: item.chatId,
+      cwd: path.resolve(item.cwd),
+      model: item.model || "",
+      usage: item.usage || emptyUsage(),
+      updatedAt: item.updatedAt || "",
+    });
+  }
+  try {
+    const data = JSON.parse(fs.readFileSync(cwdIndexPath, "utf8"));
+    const rows = Array.isArray(data) ? data : data ? [data] : [];
+    for (const row of rows) {
+      if (!row?.chatId || !row?.cwd || !chatIdPattern.test(row.chatId)) continue;
+      if (!sameCwd(row.cwd, resolved) || seen.has(row.chatId)) continue;
+      seen.add(row.chatId);
+      chats.push({
+        chatId: row.chatId,
+        cwd: path.resolve(row.cwd),
+        model: "",
+        usage: emptyUsage(),
+        updatedAt: "",
+      });
+    }
+  } catch {
+    // ignore missing index
+  }
+  chats.sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
+  return chats;
+}
+
+function rememberCwd(chatId, cwd) {
+  const resolved = path.resolve(cwd);
+  let rows = [];
+  try {
+    const data = JSON.parse(fs.readFileSync(cwdIndexPath, "utf8"));
+    rows = Array.isArray(data) ? data : data ? [data] : [];
+  } catch {
+    rows = [];
+  }
+  const next = [
+    { cwd: resolved, chatId },
+    ...rows.filter((row) => {
+      if (!row || !row.chatId || !row.cwd) return false;
+      try {
+        return !sameCwd(row.cwd, resolved);
+      } catch {
+        return false;
+      }
+    }),
+  ].slice(0, 80);
+  fs.writeFileSync(cwdIndexPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+}
+
+function createChatId() {
+  return new Promise((resolve, reject) => {
+    const options = {
+      cwd: root,
+      env: { ...process.env, CURSOR_INVOKED_AS: process.platform === "win32" ? "agent.cmd" : "agent" },
+      windowsHide: true,
+    };
+    const child = process.platform === "win32"
+      ? spawn(
+        path.join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+        ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", cliScript(), "create-chat"],
+        options,
+      )
+      : spawn(linuxAgentBin(), ["create-chat"], options);
+    let out = "";
+    let err = "";
+    child.stdout.on("data", (chunk) => {
+      out += chunk.toString("utf8");
+    });
+    child.stderr.on("data", (chunk) => {
+      err += chunk.toString("utf8");
+    });
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      const text = `${out}\n${err}`;
+      const match = text.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+      if (match) {
+        resolve(match[0]);
+        return;
+      }
+      reject(new Error(text.trim() || `create-chat 退出码 ${code ?? "?"}`));
+    });
+  });
+}
+
+let folderPicker = null;
+
+function pickFolder(startDir) {
+  const initial = startDir && fs.existsSync(startDir) ? path.resolve(startDir) : homeDir() || root;
+  if (process.platform === "win32") {
+    if (folderPicker && !folderPicker.killed) {
+      try { folderPicker.kill(); } catch { /* the previous dialog is already gone */ }
+    }
+    const stamp = `${process.pid}-${Date.now()}`;
+    const outFile = path.join(os.tmpdir(), `webai-pick-${stamp}.txt`);
+    const scriptFile = path.join(os.tmpdir(), `webai-pick-${stamp}.ps1`);
+    const script = `
+$ErrorActionPreference = "Stop"
+$outFile = $args[0]
+$initial = $args[1]
+try {
+  Add-Type -AssemblyName System.Windows.Forms
+  $owner = New-Object System.Windows.Forms.Form
+  $owner.TopMost = $true
+  $owner.StartPosition = "CenterScreen"
+  $owner.ShowInTaskbar = $false
+  $owner.Width = 1
+  $owner.Height = 1
+  $owner.Show()
+  $owner.Activate()
+  $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+  $dialog.Description = "选择 Agent 工作目录"
+  $dialog.ShowNewFolderButton = $true
+  if ($initial -and (Test-Path -LiteralPath $initial)) { $dialog.SelectedPath = $initial }
+  $result = $dialog.ShowDialog($owner)
+  $owner.Close()
+  if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
+    [System.IO.File]::WriteAllText($outFile, $dialog.SelectedPath)
+  } else {
+    [System.IO.File]::WriteAllText($outFile, "")
+  }
+} catch {
+  [System.IO.File]::WriteAllText($outFile, ("ERROR:" + $_.Exception.Message))
+  exit 1
+}
+`;
+    fs.writeFileSync(scriptFile, `\uFEFF${script}`, "utf8");
+    return new Promise((resolve, reject) => {
+      const child = spawn(
+        path.join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+        ["-NoProfile", "-ExecutionPolicy", "Bypass", "-STA", "-WindowStyle", "Hidden", "-File", scriptFile, outFile, initial],
+        { windowsHide: false, stdio: "ignore" },
+      );
+      folderPicker = child;
+      const finish = (error, picked) => {
+        if (folderPicker === child) folderPicker = null;
+        try { fs.unlinkSync(outFile); } catch { /* already removed */ }
+        try { fs.unlinkSync(scriptFile); } catch { /* already removed */ }
+        if (error) reject(error);
+        else resolve(picked);
+      };
+      child.on("error", (error) => finish(error));
+      child.on("exit", () => {
+        let text = "";
+        try { text = fs.readFileSync(outFile, "utf8").replace(/^\uFEFF/, "").trim(); } catch { /* cancelled before a path was written */ }
+        if (text.startsWith("ERROR:")) finish(new Error(text.slice(6).trim() || "无法打开文件夹选择。"));
+        else finish(null, text);
+      });
+    });
+  }
+  return new Promise((resolve) => {
+    const tryZenity = () => spawn("zenity", ["--file-selection", "--directory", "--title=选择 Agent 工作目录", `--filename=${initial}${path.sep}`], { windowsHide: true });
+    const tryKdialog = () => spawn("kdialog", ["--getexistingdirectory", initial, "--title", "选择 Agent 工作目录"], { windowsHide: true });
+    const run = (child, next) => {
+      let out = "";
+      child.stdout.on("data", (chunk) => {
+        out += chunk.toString("utf8");
+      });
+      child.on("error", () => {
+        if (next) next();
+        else resolve("");
+      });
+      child.on("exit", (code) => {
+        const text = out.trim();
+        if (code === 0 && text) resolve(text);
+        else if (next) next();
+        else resolve("");
+      });
+    };
+    run(tryZenity(), () => run(tryKdialog(), null));
+  });
 }
 
 function findTranscript(chatId) {
@@ -1187,6 +1398,76 @@ const server = http.createServer(async (req, res) => {
       const cwd = path.resolve(body.cwd);
       rememberChat(body.chatId, cwd);
       sendJson(res, 200, { ok: true, chatId: body.chatId, cwd });
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/detach") {
+      const body = await readBody(req);
+      if (!chatIdPattern.test(body.chatId || "")) {
+        sendJson(res, 400, { ok: false, message: "需要 chatId。" });
+        return;
+      }
+      const result = forgetChat(body.chatId);
+      if (!result.ok) {
+        sendJson(res, 409, result);
+        return;
+      }
+      sendJson(res, 200, result);
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/pick-folder") {
+      const body = await readBody(req);
+      const start = typeof body.cwd === "string" && body.cwd.trim() ? body.cwd.trim() : "";
+      try {
+        const picked = await pickFolder(start);
+        if (!picked) {
+          sendJson(res, 200, { ok: false, cancelled: true, message: "没有选择文件夹。" });
+          return;
+        }
+        sendJson(res, 200, { ok: true, cwd: path.resolve(picked) });
+      } catch (error) {
+        sendJson(res, 500, { ok: false, message: error instanceof Error ? error.message : String(error) });
+      }
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/create") {
+      const body = await readBody(req);
+      const raw = typeof body.cwd === "string" ? body.cwd.trim() : "";
+      if (!raw) {
+        sendJson(res, 400, { ok: false, message: "需要工作目录。" });
+        return;
+      }
+      const cwd = path.resolve(raw);
+      let stat;
+      try {
+        stat = fs.statSync(cwd);
+      } catch {
+        sendJson(res, 400, { ok: false, message: "找不到这个文件夹。" });
+        return;
+      }
+      if (!stat.isDirectory()) {
+        sendJson(res, 400, { ok: false, message: "路径不是文件夹。" });
+        return;
+      }
+      const forceNew = Boolean(body.forceNew);
+      const existing = findChatsForCwd(cwd);
+      if (!forceNew && existing.length) {
+        sendJson(res, 200, {
+          ok: false,
+          existing: true,
+          cwd,
+          chatId: existing[0].chatId,
+          chats: existing.slice(0, 8),
+          message: "这个目录已有会话。",
+        });
+        return;
+      }
+      try {
+        const chatId = await createChatId();
+        rememberChat(chatId, cwd);
+        sendJson(res, 200, { ok: true, chatId, cwd, created: true });
+      } catch (error) {
+        sendJson(res, 500, { ok: false, message: error instanceof Error ? error.message : String(error) });
+      }
       return;
     }
     const sessionMatch = url.pathname.match(/^\/api\/session\/([^/]+)$/);
