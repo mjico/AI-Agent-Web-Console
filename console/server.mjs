@@ -23,10 +23,12 @@ const sessions = new Map();
 const running = new Map();
 const turnEmit = new Map();
 const transcriptCache = new Map();
-const HISTORY_LIMIT = 20;
+const HISTORY_LIMIT = 80;
+const VISIBLE_TURNS = 30;
+const TOOL_TURNS = 3;
 const MESSAGE_CHARS = 4000;
 const STEP_LIMIT = 40;
-const RAW_CHARS = 8000;
+const RAW_CHARS = 24000;
 
 function homeDir() {
   if (process.platform === "win32") return process.env.USERPROFILE || process.env.HOME || "";
@@ -60,15 +62,62 @@ function loadState() {
     const data = JSON.parse(fs.readFileSync(statePath, "utf8"));
     return {
       activeChatId: data.activeChatId || null,
+      proxy: typeof data.proxy === "string" ? data.proxy : "",
       chats: Array.isArray(data.chats) ? data.chats : [],
     };
   } catch {
-    return { activeChatId: null, chats: [] };
+    return { activeChatId: null, proxy: "", chats: [] };
   }
 }
 
 function saveState(state) {
-  fs.writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  const prev = loadState();
+  const next = {
+    activeChatId: state.activeChatId ?? null,
+    ...(typeof state.proxy === "string" ? (state.proxy ? { proxy: state.proxy } : {}) : (prev.proxy ? { proxy: prev.proxy } : {})),
+    chats: Array.isArray(state.chats) ? state.chats : [],
+  };
+  fs.writeFileSync(statePath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+}
+
+function cleanProxyUrl(value) {
+  let raw = String(value || "").trim();
+  if (!raw) return { ok: true, proxy: "" };
+  if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(raw)) raw = `http://${raw}`;
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return { ok: false, message: "代理地址格式不对，例如 http://127.0.0.1:9910" };
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return { ok: false, message: "Cursor CLI 只支持 http:// 或 https:// 代理（不支持 socks）" };
+  }
+  if (!parsed.hostname) return { ok: false, message: "代理地址缺少主机名" };
+  return { ok: true, proxy: raw.replace(/\/+$/, "") };
+}
+
+function configuredProxy() {
+  const saved = cleanProxyUrl(loadState().proxy);
+  return saved.ok ? saved.proxy : "";
+}
+
+function cliEnv() {
+  const env = { ...process.env, CURSOR_INVOKED_AS: process.platform === "win32" ? "agent.cmd" : "agent" };
+  const proxy = configuredProxy();
+  if (proxy) {
+    env.HTTPS_PROXY = proxy;
+    env.HTTP_PROXY = proxy;
+    env.https_proxy = proxy;
+    env.http_proxy = proxy;
+    const keep = (env.NO_PROXY || env.no_proxy || "").split(",").map((item) => item.trim()).filter(Boolean);
+    for (const host of ["127.0.0.1", "localhost"]) {
+      if (!keep.includes(host)) keep.push(host);
+    }
+    env.NO_PROXY = keep.join(",");
+    env.no_proxy = env.NO_PROXY;
+  }
+  return env;
 }
 
 function sessionOf(chatId) {
@@ -78,7 +127,13 @@ function sessionOf(chatId) {
     session = {
       chatId,
       cwd: saved?.cwd || "",
+      name: saved?.name || "",
       model: saved?.model || "",
+      modelId: saved?.modelId || "",
+      mode: cleanMode(saved?.mode),
+      pendingPrompt: saved?.pendingPrompt || "",
+      promptFailed: Boolean(saved?.promptFailed),
+      promptUsers: Number(saved?.promptUsers) || 0,
       status: "idle",
       tool: "",
       note: "",
@@ -273,7 +328,13 @@ function rememberChat(chatId, cwd) {
   chats.unshift({
     chatId,
     cwd: session.cwd,
+    name: session.name || "",
     model: session.model,
+    modelId: session.modelId || "",
+    mode: session.mode || "",
+    pendingPrompt: session.pendingPrompt || "",
+    promptFailed: Boolean(session.promptFailed),
+    promptUsers: Number(session.promptUsers) || 0,
     usage: session.usage,
     updatedAt: now,
   });
@@ -318,6 +379,7 @@ function findChatsForCwd(cwd) {
     chats.push({
       chatId: item.chatId,
       cwd: path.resolve(item.cwd),
+      name: item.name || "",
       model: item.model || "",
       usage: item.usage || emptyUsage(),
       updatedAt: item.updatedAt || "",
@@ -333,6 +395,7 @@ function findChatsForCwd(cwd) {
       chats.push({
         chatId: row.chatId,
         cwd: path.resolve(row.cwd),
+        name: "",
         model: "",
         usage: emptyUsage(),
         updatedAt: "",
@@ -368,11 +431,85 @@ function rememberCwd(chatId, cwd) {
   fs.writeFileSync(cwdIndexPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
 }
 
+let modelCache = { at: 0, models: null };
+let modelListTask = null;
+
+function parseModelList(text) {
+  const plain = String(text || "").replace(/\u001b\[[0-9;]*m/g, "");
+  const models = [];
+  for (const raw of plain.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line === "Available models" || line.startsWith("Tip:")) continue;
+    const match = line.match(/^(\S+)\s+-\s+(.*?)(?:\s+\(([^)]*)\))?\s*$/);
+    if (!match) continue;
+    const tags = match[3] || "";
+    models.push({
+      id: match[1],
+      name: match[2].trim(),
+      isDefault: /\bdefault\b/.test(tags),
+    });
+  }
+  return models;
+}
+
+function fetchModelList() {
+  return new Promise((resolve, reject) => {
+    const options = {
+      cwd: root,
+      env: cliEnv(),
+      windowsHide: true,
+    };
+    const child = process.platform === "win32"
+      ? spawn(
+        path.join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+        ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", cliScript(), "models"],
+        options,
+      )
+      : spawn(linuxAgentBin(), ["models"], options);
+    let out = "";
+    let err = "";
+    const timer = setTimeout(() => {
+      child.kill();
+    }, 25000);
+    child.stdout.on("data", (chunk) => {
+      out += chunk.toString("utf8");
+    });
+    child.stderr.on("data", (chunk) => {
+      err += chunk.toString("utf8");
+    });
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on("exit", (code) => {
+      clearTimeout(timer);
+      const models = parseModelList(`${out}\n${err}`);
+      if (!models.length) {
+        reject(new Error(err.trim() || out.trim() || `模型列表退出码 ${code ?? "?"}`));
+        return;
+      }
+      resolve(models);
+    });
+  });
+}
+
+function listModels() {
+  if (modelCache.models && Date.now() - modelCache.at < 5 * 60 * 1000) return Promise.resolve(modelCache.models);
+  if (modelListTask) return modelListTask;
+  modelListTask = fetchModelList().then((models) => {
+    modelCache = { at: Date.now(), models };
+    return models;
+  }).finally(() => {
+    modelListTask = null;
+  });
+  return modelListTask;
+}
+
 function createChatId() {
   return new Promise((resolve, reject) => {
     const options = {
       cwd: root,
-      env: { ...process.env, CURSOR_INVOKED_AS: process.platform === "win32" ? "agent.cmd" : "agent" },
+      env: cliEnv(),
       windowsHide: true,
     };
     const child = process.platform === "win32"
@@ -501,7 +638,86 @@ function findTranscript(chatId) {
   return null;
 }
 
-function toolScroll(input) {
+function cleanName(value) {
+  return String(value || "").replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 80);
+}
+
+function titleFromText(text) {
+  const clean = cleanName(String(text || "").replace(/<timestamp>[\s\S]*?<\/timestamp>/g, "").replace(/<\/?user_query>/g, ""));
+  if (!clean) return "";
+  return clean.length > 36 ? `${clean.slice(0, 36)}…` : clean;
+}
+
+const previewCache = new Map();
+
+function textFromTranscriptRow(row) {
+  const content = row?.message?.content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.filter((part) => part && part.type === "text").map((part) => part.text || "").join("\n");
+}
+
+function chatPreview(chatId) {
+  const file = findTranscript(chatId);
+  if (!file) return "";
+  let stat;
+  try {
+    stat = fs.statSync(file);
+  } catch {
+    return "";
+  }
+  const cached = previewCache.get(chatId);
+  if (cached && cached.mtime === stat.mtimeMs && cached.size === stat.size) return cached.text;
+  let text = "";
+  let fd;
+  try {
+    fd = fs.openSync(file, "r");
+    const buf = Buffer.alloc(Math.min(stat.size, 65536));
+    fs.readSync(fd, buf, 0, buf.length, 0);
+    for (const line of buf.toString("utf8").split(/\r?\n/)) {
+      if (!line.trim() || !line.endsWith("}")) continue;
+      let row;
+      try {
+        row = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (row.role !== "user") continue;
+      text = titleFromText(textFromTranscriptRow(row));
+      if (text) break;
+    }
+  } catch {
+    text = "";
+  } finally {
+    if (fd != null) {
+      try { fs.closeSync(fd); } catch { /* already closed */ }
+    }
+  }
+  previewCache.set(chatId, { mtime: stat.mtimeMs, size: stat.size, text });
+  return text;
+}
+
+function publicChat(item) {
+  const name = item.name || "";
+  return {
+    chatId: item.chatId,
+    cwd: item.cwd || "",
+    name,
+    preview: name ? "" : chatPreview(item.chatId),
+    model: item.model || "",
+    modelId: item.modelId || "",
+    mode: cleanMode(item.mode),
+    usage: item.usage || emptyUsage(),
+    updatedAt: item.updatedAt || "",
+  };
+}
+
+function unwrapToolResult(result) {
+  if (!result || typeof result !== "object") return null;
+  return result.success || result.failure || result.error || result;
+}
+
+function toolScroll(input, result) {
   const data = input || {};
   const args = data.arguments && typeof data.arguments === "object" ? data.arguments : {};
   const parts = [
@@ -509,6 +725,7 @@ function toolScroll(input) {
     args.description,
     data.command,
     args.command,
+    data.working_directory || data.workingDirectory || args.working_directory || args.workingDirectory,
     data.prompt || data.task,
     args.prompt || args.task,
     data.path || data.file_path || data.target_directory,
@@ -517,8 +734,17 @@ function toolScroll(input) {
   if (typeof data.old_string === "string" || typeof data.new_string === "string" || typeof data.contents === "string") {
     parts.push(["--- 原来的内容", data.old_string || "", "+++ 写成", data.new_string || data.contents || ""].join("\n"));
   }
+  const out = unwrapToolResult(result);
+  if (out && typeof out === "object") {
+    if (out.exitCode != null) parts.push(`exit ${out.exitCode}`);
+    if (typeof out.stdout === "string" && out.stdout.trim()) parts.push(["--- stdout", out.stdout].join("\n"));
+    if (typeof out.stderr === "string" && out.stderr.trim()) parts.push(["--- stderr", out.stderr].join("\n"));
+    if (!String(out.stdout || "").trim() && !String(out.stderr || "").trim() && typeof out.interleavedOutput === "string" && out.interleavedOutput.trim()) {
+      parts.push(["--- output", out.interleavedOutput].join("\n"));
+    }
+  }
   let text = parts.join("\n\n").trim();
-  if (text.length > 8000) text = `${text.slice(0, 8000)}\n…（已截断，子代理滚屏会在点开后继续加载）`;
+  if (text.length > 16000) text = `${text.slice(0, 16000)}\n…（已截断，子代理滚屏会在点开后继续加载）`;
   return text;
 }
 
@@ -611,6 +837,18 @@ function toolsFromContent(content) {
     .map((item) => item.name || item.toolName || "工具");
 }
 
+function failNote(reason) {
+  const text = String(reason || "").trim();
+  if (!text || text === "本轮失败") return "本轮失败";
+  return `本轮失败：${text}`;
+}
+
+function failureText(value) {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (!value || typeof value !== "object") return "";
+  return failureText(value.message || value.error || value.result || value.text || value.reason || "");
+}
+
 function clip(text, max) {
   const value = String(text || "");
   if (value.length <= max) return value;
@@ -619,10 +857,40 @@ function clip(text, max) {
 
 function slimInput(input) {
   const copy = { ...(input || {}) };
-  if (typeof copy.contents === "string") copy.contents = `（${copy.contents.split("\n").length} 行，正文见下方摘要）`;
-  if (typeof copy.new_string === "string") copy.new_string = clip(copy.new_string, 2000);
-  if (typeof copy.old_string === "string") copy.old_string = clip(copy.old_string, 1000);
-  if (typeof copy.command === "string") copy.command = clip(copy.command, 1500);
+  if (copy.workingDirectory && !copy.working_directory) copy.working_directory = copy.workingDirectory;
+  delete copy.workingDirectory;
+  delete copy.parsingResult;
+  delete copy.toolCallId;
+  delete copy.conversationId;
+  delete copy.requestId;
+  delete copy.adminCommandDenylist;
+  delete copy.fileOutputThresholdBytes;
+  delete copy.timeoutBehavior;
+  delete copy.hardTimeout;
+  delete copy.closeStdin;
+  delete copy.smartModeClassifierAllowed;
+  delete copy.skipApproval;
+  delete copy.hasInputRedirect;
+  delete copy.hasOutputRedirect;
+  delete copy.simpleCommands;
+  if (typeof copy.contents === "string") copy.contents = clip(copy.contents, 8000);
+  if (typeof copy.new_string === "string") copy.new_string = clip(copy.new_string, 8000);
+  if (typeof copy.old_string === "string") copy.old_string = clip(copy.old_string, 8000);
+  if (typeof copy.command === "string") copy.command = clip(copy.command, 4000);
+  return copy;
+}
+
+function slimResult(result) {
+  if (!result || typeof result !== "object") return result || null;
+  const body = unwrapToolResult(result);
+  if (!body || typeof body !== "object") return result;
+  const copy = { ...body };
+  for (const key of ["stdout", "stderr", "interleavedOutput", "output", "content", "message"]) {
+    if (typeof copy[key] === "string") copy[key] = clip(copy[key], 12000);
+  }
+  if (result.success) return { success: copy, isBackground: result.isBackground };
+  if (result.failure) return { failure: copy, isBackground: result.isBackground };
+  if (result.error) return { error: copy, isBackground: result.isBackground };
   return copy;
 }
 
@@ -647,7 +915,14 @@ function summarizeTool(name, input) {
   }
   if (name === "Shell") {
     const command = String(data.command || "");
-    return { kind: "shell", label: "命令", title: data.description || command.split("\n")[0].slice(0, 180) || "命令", stat: "", detail: clip(command, 1600) };
+    const cwd = data.working_directory || data.workingDirectory || "";
+    return {
+      kind: "shell",
+      label: "命令",
+      title: data.description || command.split("\n")[0].slice(0, 180) || "命令",
+      stat: cwd ? String(cwd) : "",
+      detail: clip(command, 4000),
+    };
   }
   if (isSubagentCall(name, data)) {
     const args = data.arguments && typeof data.arguments === "object" ? data.arguments : data;
@@ -699,13 +974,22 @@ function parseTranscript(chatId) {
     entries.push({ type: "note", text: `本轮还有 ${skippedTools} 个步骤没有展开` });
     skippedTools = 0;
   };
+  const userIndexesOf = () => {
+    const indexes = [];
+    entries.forEach((item, index) => {
+      if (item.type === "user") indexes.push(index);
+    });
+    return indexes;
+  };
   const pushEntry = (entry) => {
     entries.push(entry);
-    const userIndexes = [];
-    entries.forEach((item, index) => {
-      if (item.type === "user") userIndexes.push(index);
-    });
-    if (userIndexes.length > 4) entries.splice(0, userIndexes[0] + 1);
+    let userIndexes = userIndexesOf();
+    if (userIndexes.length > TOOL_TURNS) {
+      const toolCut = userIndexes[userIndexes.length - TOOL_TURNS];
+      for (let index = toolCut - 1; index >= 0; index -= 1) {
+        if (entries[index].type === "tool") entries.splice(index, 1);
+      }
+    }
   };
   for (const line of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
     if (!line.trim()) continue;
@@ -787,6 +1071,13 @@ function sameText(leftText, rightText) {
   return Boolean(left) && left === right;
 }
 
+function sameUserPrompt(shown, prompt) {
+  if (sameText(shown, prompt)) return true;
+  const left = normalizeText(shown).replace(/\n…（已截断）$/, "");
+  const right = normalizeText(prompt);
+  return Boolean(left) && Boolean(right) && (right === left || right.startsWith(left) || left.startsWith(right));
+}
+
 function absorbLive(entries, live) {
   let lastMatchedUser = -1;
   for (let index = 0; index < live.length; index += 1) {
@@ -839,7 +1130,20 @@ function orderTurnEntries(entries) {
   return result;
 }
 
-function snapshot(chatId) {
+function windowEntries(entries, turns) {
+  const limit = Number.isFinite(turns) && turns > 0 ? Math.min(Math.floor(turns), 10000) : VISIBLE_TURNS;
+  const userIndexes = [];
+  entries.forEach((item, index) => {
+    if (item.type === "user") userIndexes.push(index);
+  });
+  if (userIndexes.length <= limit) return { entries, omitted: 0 };
+  return {
+    entries: entries.slice(userIndexes[userIndexes.length - limit]),
+    omitted: userIndexes.length - limit,
+  };
+}
+
+function snapshot(chatId, turns) {
   const session = sessionOf(chatId);
   const transcript = parseTranscript(chatId);
   const messages = [];
@@ -868,14 +1172,23 @@ function snapshot(chatId) {
     .map((entry) => ({ role: entry.type, text: entry.text })));
   const entries = (transcript.entries || []).map((entry) => ({ ...entry }));
   absorbLive(entries, session.live);
-  for (const step of session.steps) {
-    if (step.kind === "thinking" || step.kind === "result") continue;
-    if (!step.title && !step.label) continue;
-    if (session.turnStartedAt && (step.startedAt || 0) < session.turnStartedAt) continue;
-    if (entries.some((entry) => entry.id === step.id)) continue;
-    entries.push({ ...step, type: "tool" });
+  const transcriptUsers = (transcript.entries || []).filter((entry) => entry.type === "user");
+  const promptLanded = session.pendingPrompt
+    && transcriptUsers.length > (Number(session.promptUsers) || 0)
+    && sameUserPrompt(transcriptUsers[transcriptUsers.length - 1].text, session.pendingPrompt);
+  if (promptLanded) {
+    session.pendingPrompt = "";
+    session.promptFailed = false;
+    rememberChat(chatId, session.cwd);
+  } else if (session.pendingPrompt) {
+    const shownUsers = entries.filter((entry) => entry.type === "user");
+    const shown = shownUsers.length > (Number(session.promptUsers) || 0)
+      && sameUserPrompt(shownUsers[shownUsers.length - 1].text, session.pendingPrompt);
+    if (!shown) entries.push({ type: "user", text: session.pendingPrompt });
   }
-  const ordered = orderTurnEntries(entries);
+  absorbLiveSteps(entries, session.steps, session.turnStartedAt);
+  const windowed = windowEntries(entries, turns);
+  const ordered = orderTurnEntries(windowed.entries);
   const busy = running.has(chatId);
   let status = session.status;
   if (status === "idle" && transcript.status === "error") status = "failed";
@@ -884,20 +1197,22 @@ function snapshot(chatId) {
     ordered.push({
       type: "note",
       kind: stopped || status === "failed" ? "turn-fail" : "turn-end",
-      text: stopped ? "已终止" : status === "failed" ? "本轮失败" : "本轮已结束",
+      text: stopped ? "已终止" : status === "failed" ? failNote(session.failReason || session.note) : "本轮已结束",
     });
   }
-  let omitted = transcript.omitted || 0;
-  if (messages.length > HISTORY_LIMIT) {
-    omitted += messages.length - HISTORY_LIMIT;
-    messages.splice(0, messages.length - HISTORY_LIMIT);
-  }
+  const omitted = windowed.omitted;
+  if (messages.length > HISTORY_LIMIT) messages.splice(0, messages.length - HISTORY_LIMIT);
   const tools = [...transcript.tools];
   if (session.tool && !tools.includes(session.tool)) tools.push(session.tool);
   return {
     chatId,
     cwd: session.cwd,
+    name: session.name || "",
+    preview: session.name ? "" : chatPreview(chatId),
     model: session.model,
+    modelId: session.modelId || "",
+    mode: session.mode || "",
+    pendingPrompt: session.promptFailed ? session.pendingPrompt || "" : "",
     status,
     tool: session.tool,
     note: transcript.found ? session.note : "终端进度尚未同步",
@@ -906,10 +1221,7 @@ function snapshot(chatId) {
     entries: ordered,
     omitted,
     tools,
-    steps: mergeSteps(
-      transcript.steps || [],
-      (session.steps || []).filter((step) => !session.turnStartedAt || (step.startedAt || 0) >= session.turnStartedAt),
-    ),
+    steps: mergeSteps(transcript.steps || [], session.steps || []),
     terminalSync: transcript.found ? "ok" : "missing",
     running: busy,
     pendingChoice: session.pendingChoice || null,
@@ -980,7 +1292,20 @@ function cliScript() {
   return path.join(path.dirname(agentCmd()), "cursor-agent.ps1");
 }
 
-function cliArgs(chatId, prompt) {
+function cleanMode(value) {
+  const mode = String(value || "").trim().toLowerCase();
+  return mode === "agent" || mode === "plan" || mode === "ask" ? mode : "";
+}
+
+function cleanModelId(value) {
+  const id = String(value || "").trim();
+  if (!id || id.length > 120 || !/^[A-Za-z0-9._:[\]=,+-]+$/.test(id)) return "";
+  return id;
+}
+
+function cliArgs(chatId, prompt, modelId, mode) {
+  const picked = cleanMode(mode);
+  const flagged = picked === "plan" || picked === "ask" ? picked : "";
   return [
     "-p",
     "--resume",
@@ -990,16 +1315,18 @@ function cliArgs(chatId, prompt) {
     "--output-format",
     "stream-json",
     "--stream-partial-output",
+    ...(modelId ? ["--model", modelId] : []),
+    ...(flagged ? ["--mode", flagged] : []),
     ...(prompt.startsWith("-") ? ["--"] : []),
     prompt,
   ];
 }
 
-function runCli(chatId, cwd, prompt) {
-  const args = cliArgs(chatId, prompt);
+function runCli(chatId, cwd, prompt, modelId, mode) {
+  const args = cliArgs(chatId, prompt, modelId, mode);
   const options = {
     cwd: cwd || root,
-    env: { ...process.env, CURSOR_INVOKED_AS: process.platform === "win32" ? "agent.cmd" : "agent" },
+    env: cliEnv(),
   };
   if (process.platform === "win32") {
     options.windowsHide = true;
@@ -1028,21 +1355,67 @@ function pushStep(list, step) {
   if (list.length > STEP_LIMIT) list.shift();
 }
 
+function stepCallId(event, name) {
+  const raw = event.call_id || event.tool_call_id || event.id || "";
+  const clean = String(raw).replace(/[\r\n\t]+/g, " ").trim();
+  return clean || String(name || "工具");
+}
+
+function sameToolStub(entry, step) {
+  if (!entry || !step) return false;
+  if (entry.kind && step.kind && entry.kind !== step.kind) return false;
+  const left = entry.detail || entry.title || "";
+  const right = step.detail || step.title || "";
+  return Boolean(left) && left === right;
+}
+
+function absorbLiveSteps(entries, steps, turnStartedAt) {
+  for (const step of steps || []) {
+    if (step.kind === "thinking" || step.kind === "result") continue;
+    if (!step.title && !step.label) continue;
+    if (entries.some((entry) => entry.id === step.id)) continue;
+    const stubAt = entries.findIndex((entry) => entry.type === "tool" && entry.source === "transcript" && entry.durationMs == null && sameToolStub(entry, step));
+    const current = !turnStartedAt || (step.startedAt || 0) >= turnStartedAt;
+    if (stubAt >= 0) {
+      entries[stubAt] = { ...step, type: "tool" };
+      continue;
+    }
+    if (current || step.status === "done" || step.status === "error") entries.push({ ...step, type: "tool" });
+  }
+}
+
 function mergeSteps(fromFile, live) {
   const merged = [...(fromFile || [])];
   for (const step of live || []) {
-    const index = merged.findIndex((item) => item.kind === step.kind && item.name === step.name && item.durationMs == null && step.durationMs != null);
-    if (index >= 0) merged.splice(index, 1);
-    merged.push(step);
+    const same = merged.findIndex((item) => item.id === step.id);
+    if (same >= 0) {
+      merged[same] = step;
+      continue;
+    }
+    const stub = merged.findIndex((item) => item.source === "transcript" && item.durationMs == null && sameToolStub(item, step));
+    if (stub >= 0) merged[stub] = step;
+    else merged.push(step);
   }
   return merged.slice(-STEP_LIMIT);
 }
 
-function liveToolInput(event) {
+function liveToolNode(event) {
   const call = event.tool_call || event.toolCall || {};
   const key = Object.keys(call).find((name) => call[name] && typeof call[name] === "object");
-  const node = key ? call[key] : {};
-  return node.args || node.input || event.input || event.args || {};
+  return key ? call[key] : {};
+}
+
+function liveToolInput(event) {
+  const node = liveToolNode(event);
+  const args = { ...(node.args || node.input || event.input || event.args || {}) };
+  if (node.description && !args.description) args.description = node.description;
+  if (args.workingDirectory && !args.working_directory) args.working_directory = args.workingDirectory;
+  return args;
+}
+
+function liveToolResult(event) {
+  const node = liveToolNode(event);
+  return node.result || event.result || null;
 }
 
 function toolLabel(event) {
@@ -1147,17 +1520,28 @@ function handleStreamLine(session, line, emit) {
   if (event.type === "tool_call" || event.type === "tool_use") {
     if (event.subtype !== "completed") session.assistantBreak = true;
     const name = toolLabel(event);
-    const summary = summarizeTool(name, liveToolInput(event));
-    const id = String(event.call_id || event.tool_call_id || event.id || name);
+    const input = liveToolInput(event);
+    const result = event.subtype === "completed" ? liveToolResult(event) : null;
+    const summary = summarizeTool(name, input);
+    const id = stepCallId(event, name);
     if (event.subtype === "completed") {
-      const step = [...session.steps].reverse().find((item) => item.status === "running" && (item.id === id || item.name === name));
+      const runningNamed = session.steps.filter((item) => item.status === "running" && item.name === name);
+      const step = session.steps.find((item) => item.id === id)
+        || (runningNamed.length === 1 ? runningNamed[0] : null);
       const end = event.timestamp_ms || Date.now();
       if (step) {
         Object.assign(step, summary, { name, type: "tool" });
         step.durationMs = Math.max(0, end - (step.startedAt || end));
-        step.status = "done";
-        step.scroll = toolScroll(liveToolInput(event));
-        step.raw = capRaw({ name, input: slimInput(liveToolInput(event)) });
+        const out = unwrapToolResult(result);
+        if (out && typeof out === "object" && out.exitCode != null) {
+          step.stat = [step.stat, `exit ${out.exitCode}`].filter(Boolean).join(" · ");
+          if (Number(out.exitCode) !== 0) step.status = "error";
+          else step.status = "done";
+        } else {
+          step.status = "done";
+        }
+        step.scroll = toolScroll(input, result);
+        step.raw = capRaw({ name, input: slimInput(input), result: slimResult(result) });
         emit({ type: "step", step });
       }
       session.tool = "";
@@ -1171,8 +1555,8 @@ function handleStreamLine(session, line, emit) {
         startedAt: event.timestamp_ms || Date.now(),
         durationMs: null,
         source: "live",
-        scroll: toolScroll(liveToolInput(event)),
-        raw: capRaw({ name, input: slimInput(liveToolInput(event)) }),
+        scroll: toolScroll(input),
+        raw: capRaw({ name, input: slimInput(input) }),
       };
       pushStep(session.steps, step);
       session.tool = name;
@@ -1187,8 +1571,16 @@ function handleStreamLine(session, line, emit) {
     const failed = event.is_error === true || event.subtype === "error";
     session.status = failed ? "failed" : "idle";
     session.tool = "";
-    const message = failed ? (typeof event.result === "string" && event.result ? event.result : "这一轮失败") : "";
-    if (message) session.live.push({ role: "error", text: message });
+    const message = failed ? clip(failureText(event.result) || failureText(event.error) || failureText(event.message) || "没有返回具体原因", 1500) : "";
+    if (failed) {
+      session.failReason = message;
+      session.note = message.split("\n")[0].slice(0, 180);
+      session.promptFailed = true;
+    } else {
+      session.failReason = "";
+      session.note = "";
+      session.promptFailed = false;
+    }
     rememberChat(session.chatId, session.cwd);
     const resultStep = {
       id: `result-${Date.now()}`,
@@ -1204,6 +1596,7 @@ function handleStreamLine(session, line, emit) {
         duration_ms: event.duration_ms,
         duration_api_ms: event.duration_api_ms,
         is_error: event.is_error,
+        result: message || undefined,
         usage: event.usage || null,
       }),
     };
@@ -1214,57 +1607,133 @@ function handleStreamLine(session, line, emit) {
   }
 }
 
-function startTurn(chatId, cwd, text, res) {
+function startTurn(chatId, cwd, text, res, modelId, mode) {
   const session = sessionOf(chatId);
   session.cwd = cwd || session.cwd;
+  if (typeof modelId === "string") session.modelId = cleanModelId(modelId);
+  if (typeof mode === "string") session.mode = cleanMode(mode);
+  session.pendingPrompt = text;
+  session.promptFailed = false;
+  session.promptUsers = (parseTranscript(chatId).entries || []).filter((entry) => entry.type === "user").length;
   session.status = "running";
   session.turnStartedAt = Date.now();
   session.cancelled = false;
   session.assistantBreak = false;
   session.note = "";
+  session.failReason = "";
   session.pendingChoice = null;
   session.steers = [];
   session.turnResult = null;
+  if (!session.name && !chatPreview(chatId)) session.name = titleFromText(text);
   session.live.push({ role: "user", text });
   rememberChat(chatId, session.cwd);
   res.writeHead(200, {
     "content-type": "application/x-ndjson; charset=utf-8",
     "cache-control": "no-store",
   });
+  let acceptFollowups = true;
   const emit = (event) => {
-    res.write(`${JSON.stringify(event)}\n`);
+    try {
+      res.write(`${JSON.stringify(event)}\n`);
+    } catch {
+      acceptFollowups = false;
+    }
   };
   turnEmit.set(chatId, emit);
+  session.acceptFollowups = () => acceptFollowups && !finished;
   emit({ type: "status", status: "running" });
   emit({ type: "user", text });
   let finished = false;
   const finish = (ok, message) => {
     if (finished) return;
+    if (!session.cancelled && acceptFollowups) {
+      const next = Array.isArray(session.steers) ? session.steers.shift() : "";
+      if (next) {
+        try {
+          session.status = "running";
+          session.tool = "";
+          session.assistantBreak = true;
+          session.turnResult = null;
+          launch(next);
+          return;
+        } catch {
+          session.steers.unshift(next);
+        }
+      }
+    }
     finished = true;
+    acceptFollowups = false;
+    session.acceptFollowups = () => false;
     running.delete(chatId);
     turnEmit.delete(chatId);
     session.steers = [];
     if (session.status === "running") session.status = ok ? "idle" : "failed";
     session.tool = "";
     if (session.cancelled) session.status = "idle";
-    if (!ok && message && !session.cancelled && !session.turnResult) emit({ type: "error", message });
+    if (!session.cancelled && ok) {
+      session.failReason = "";
+      session.note = "";
+      if (session.promptFailed) {
+        session.promptFailed = false;
+        rememberChat(chatId, session.cwd);
+      }
+    } else if (!session.cancelled && !ok) {
+      const reason = clip(failureText(message) || session.failReason || (session.turnResult && session.turnResult.message) || "没有返回具体原因", 1500);
+      session.failReason = reason;
+      session.note = reason.split("\n")[0].slice(0, 180);
+      if (!session.turnResult) session.turnResult = { ok: false, message: reason };
+      else if (!session.turnResult.ok) session.turnResult.message = reason;
+      session.promptFailed = true;
+      rememberChat(chatId, session.cwd);
+    }
     emit({ type: "status", status: session.status });
     if (session.cancelled) emit({ type: "done", ok: false, cancelled: true, message: "已终止" });
-    else if (session.turnResult) emit({ type: "done", ok: session.turnResult.ok, message: session.turnResult.message || "" });
+    else emit({
+      type: "done",
+      ok: session.turnResult ? session.turnResult.ok !== false && ok : ok,
+      message: session.turnResult && session.turnResult.ok === false ? (session.turnResult.message || session.failReason || "") : (!ok ? session.failReason || "" : ""),
+    });
     res.end();
   };
   const launch = (prompt) => {
-    const child = runCli(chatId, session.cwd, prompt);
+    const child = runCli(chatId, session.cwd, prompt, session.modelId, session.mode);
     running.set(chatId, child);
     let buffer = "";
+    let pendingJson = "";
     let errorText = "";
+    const feedLine = (line) => {
+      const candidate = pendingJson ? pendingJson + line : line;
+      const parsed = (value) => {
+        try {
+          JSON.parse(value);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      if (parsed(candidate)) {
+        pendingJson = "";
+        handleStreamLine(session, candidate, emit);
+        return;
+      }
+      if (pendingJson && parsed(line)) {
+        pendingJson = "";
+        handleStreamLine(session, line, emit);
+        return;
+      }
+      if (candidate.length < 200000) {
+        pendingJson = candidate;
+        return;
+      }
+      pendingJson = "";
+    };
     child.stdout.on("data", (chunk) => {
       buffer += chunk.toString("utf8");
       let nl = buffer.indexOf("\n");
       while (nl >= 0) {
         const line = buffer.slice(0, nl).trim();
         buffer = buffer.slice(nl + 1);
-        if (line) handleStreamLine(session, line, emit);
+        if (line) feedLine(line);
         nl = buffer.indexOf("\n");
       }
     });
@@ -1273,27 +1742,27 @@ function startTurn(chatId, cwd, text, res) {
     });
     child.on("exit", (code) => {
       if (running.get(chatId) !== child) return;
+      try {
+        if (buffer.trim()) feedLine(buffer.trim());
+      } catch {
+        /* 收尾输出失败也要继续把插入的消息发出去 */
+      }
       if (child.cancelled || session.cancelled) {
         session.status = "idle";
         session.note = "已终止";
+        session.steers = [];
         finish(false, "已终止");
         return;
       }
-      if (buffer.trim()) handleStreamLine(session, buffer.trim(), emit);
-      const next = Array.isArray(session.steers) ? session.steers.shift() : "";
-      if (next) {
-        session.status = "running";
-        session.tool = "";
-        session.assistantBreak = true;
-        session.turnResult = null;
-        launch(next);
-        return;
+      if (session.turnResult && session.turnResult.ok === false && (!session.turnResult.message || session.turnResult.message === "没有返回具体原因")) {
+        const extra = errorText.trim();
+        if (extra) session.turnResult.message = clip(extra, 1500);
       }
-      if (code && session.status !== "failed" && session.status !== "idle") {
+      if (code && session.status !== "failed" && session.status !== "idle" && !(session.steers && session.steers.length)) {
         finish(false, errorText.trim() || `CLI 退出码 ${code}`);
         return;
       }
-      finish(session.status !== "failed", "");
+      finish(session.status !== "failed", session.turnResult && session.turnResult.ok === false ? session.turnResult.message || "" : "");
     });
     child.on("error", (error) => {
       if (running.get(chatId) !== child && running.get(chatId)) return;
@@ -1380,11 +1849,53 @@ const server = http.createServer(async (req, res) => {
       sendHtml(res, "index.html");
       return;
     }
+    if (req.method === "GET" && url.pathname === "/api/models") {
+      try {
+        const models = await listModels();
+        sendJson(res, 200, { ok: true, models });
+      } catch (error) {
+        sendJson(res, 500, { ok: false, message: error instanceof Error ? error.message : String(error), models: [] });
+      }
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/model") {
+      const body = await readBody(req);
+      if (!chatIdPattern.test(body.chatId || "")) {
+        sendJson(res, 400, { ok: false, message: "需要 chatId。" });
+        return;
+      }
+      const known = loadState().chats.find((item) => item.chatId === body.chatId);
+      if (!known) {
+        sendJson(res, 404, { ok: false, message: "没有这条会话。" });
+        return;
+      }
+      const session = sessionOf(body.chatId);
+      session.cwd = session.cwd || known.cwd || "";
+      if (typeof body.modelId === "string") session.modelId = cleanModelId(body.modelId);
+      if (typeof body.mode === "string") session.mode = cleanMode(body.mode);
+      rememberChat(body.chatId, session.cwd);
+      sendJson(res, 200, { ok: true, chatId: body.chatId, modelId: session.modelId, mode: session.mode || "" });
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/proxy") {
+      const body = await readBody(req);
+      const checked = cleanProxyUrl(body.proxy);
+      if (!checked.ok) {
+        sendJson(res, 400, { ok: false, message: checked.message });
+        return;
+      }
+      const state = loadState();
+      saveState({ activeChatId: state.activeChatId, proxy: checked.proxy, chats: state.chats });
+      modelCache = { at: 0, models: null };
+      sendJson(res, 200, { ok: true, proxy: checked.proxy });
+      return;
+    }
     if (req.method === "GET" && url.pathname === "/api/state") {
       const state = loadState();
       sendJson(res, 200, {
         activeChatId: state.activeChatId,
-        chats: state.chats,
+        proxy: configuredProxy(),
+        chats: state.chats.filter((item) => item && item.chatId).map(publicChat),
         runningChatIds: [...running.keys()],
       });
       return;
@@ -1398,6 +1909,24 @@ const server = http.createServer(async (req, res) => {
       const cwd = path.resolve(body.cwd);
       rememberChat(body.chatId, cwd);
       sendJson(res, 200, { ok: true, chatId: body.chatId, cwd });
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/rename") {
+      const body = await readBody(req);
+      if (!chatIdPattern.test(body.chatId || "")) {
+        sendJson(res, 400, { ok: false, message: "需要 chatId。" });
+        return;
+      }
+      const known = loadState().chats.find((item) => item.chatId === body.chatId);
+      if (!known) {
+        sendJson(res, 404, { ok: false, message: "没有这条会话。" });
+        return;
+      }
+      const session = sessionOf(body.chatId);
+      session.cwd = session.cwd || known.cwd || "";
+      session.name = cleanName(body.name);
+      rememberChat(body.chatId, session.cwd);
+      sendJson(res, 200, { ok: true, chatId: body.chatId, name: session.name, preview: session.name ? "" : chatPreview(body.chatId) });
       return;
     }
     if (req.method === "POST" && url.pathname === "/api/detach") {
@@ -1477,7 +2006,8 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 400, { ok: false, message: "chat id 无效。" });
         return;
       }
-      sendJson(res, 200, snapshot(chatId));
+      const requested = Number(url.searchParams.get("turns"));
+      sendJson(res, 200, snapshot(chatId, requested));
       return;
     }
     const scrollMatch = url.pathname.match(/^\/api\/session\/([^/]+)\/scroll$/);
@@ -1526,11 +2056,11 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       const emit = turnEmit.get(body.chatId);
-      if (!emit || !running.has(body.chatId)) {
+      const session = sessionOf(body.chatId);
+      if (!emit || !running.has(body.chatId) || (session.acceptFollowups && !session.acceptFollowups())) {
         sendJson(res, 409, { ok: false, message: "当前没有可插入的处理" });
         return;
       }
-      const session = sessionOf(body.chatId);
       if (!Array.isArray(session.steers)) session.steers = [];
       session.steers.push(text);
       session.live.push({ role: "user", text });
@@ -1551,7 +2081,9 @@ const server = http.createServer(async (req, res) => {
       }
       const known = loadState().chats.find((item) => item.chatId === body.chatId);
       const cwd = typeof body.cwd === "string" && body.cwd.trim() ? path.resolve(body.cwd) : known?.cwd || root;
-      startTurn(body.chatId, cwd, text, res);
+      const modelId = typeof body.modelId === "string" ? body.modelId : known?.modelId || "";
+      const mode = typeof body.mode === "string" ? body.mode : known?.mode || "";
+      startTurn(body.chatId, cwd, text, res, modelId, mode);
       return;
     }
     sendJson(res, 404, { ok: false, message: "没有这个页面。" });
