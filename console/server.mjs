@@ -1298,6 +1298,72 @@ function cliScript() {
   return path.join(path.dirname(agentCmd()), "cursor-agent.ps1");
 }
 
+let sqliteMod;
+async function loadDatabaseSync() {
+  if (sqliteMod === undefined) {
+    try {
+      sqliteMod = await import("node:sqlite");
+    } catch {
+      sqliteMod = null;
+    }
+  }
+  return sqliteMod?.DatabaseSync || null;
+}
+
+function cursorChatsRoot() {
+  const cfg = process.env.CURSOR_CONFIG_DIR;
+  if (cfg && cfg.trim()) return path.join(cfg.trim(), "chats");
+  const xdg = process.env.XDG_CONFIG_HOME;
+  if (xdg && xdg.trim()) return path.join(xdg.trim(), "cursor", "chats");
+  return path.join(homeDir(), ".cursor", "chats");
+}
+
+function findChatStoreDb(chatId, cwd) {
+  if (!chatIdPattern.test(chatId || "")) return "";
+  const base = cursorChatsRoot();
+  if (cwd) {
+    const hash = crypto.createHash("md5").update(path.resolve(cwd)).digest("hex");
+    const direct = path.join(base, hash, chatId, "store.db");
+    if (fs.existsSync(direct)) return direct;
+  }
+  try {
+    for (const dir of fs.readdirSync(base)) {
+      const candidate = path.join(base, dir, chatId, "store.db");
+      if (fs.existsSync(candidate)) return candidate;
+    }
+  } catch {
+    /* ignore missing chats dir */
+  }
+  return "";
+}
+
+async function syncChatStoreMode(chatId, cwd, mode, force) {
+  if (!chatId || (!force && running.has(chatId))) return;
+  const picked = cleanMode(mode);
+  if (!picked) return;
+  const storeMode = picked === "ask" ? "search" : picked === "plan" ? "plan" : "default";
+  const dbPath = findChatStoreDb(chatId, cwd);
+  if (!dbPath) return;
+  const DatabaseSync = await loadDatabaseSync();
+  if (!DatabaseSync) return;
+  let db;
+  try {
+    db = new DatabaseSync(dbPath);
+    db.exec("PRAGMA busy_timeout = 3000;");
+    const row = db.prepare("SELECT value FROM meta WHERE key = ?").get("0");
+    if (!row || typeof row.value !== "string" || !row.value) return;
+    const meta = JSON.parse(Buffer.from(row.value, "hex").toString("utf8"));
+    if (!meta || typeof meta !== "object" || meta.mode === storeMode) return;
+    meta.mode = storeMode;
+    const nextHex = Buffer.from(JSON.stringify(meta), "utf8").toString("hex");
+    db.prepare("UPDATE meta SET value = ? WHERE key = ?").run(nextHex, "0");
+  } catch {
+    /* best effort sync with Cursor CLI sqlite metadata */
+  } finally {
+    try { db?.close(); } catch { /* ignore */ }
+  }
+}
+
 function cleanMode(value) {
   const mode = String(value || "").trim().toLowerCase();
   return mode === "agent" || mode === "plan" || mode === "ask" ? mode : "";
@@ -1738,21 +1804,19 @@ function startTurn(chatId, cwd, text, res, modelId, mode) {
   emit({ type: "status", status: "running" });
   emit({ type: "user", text });
   let finished = false;
+  running.set(chatId, { cancelled: false, pid: null });
   const finish = (ok, message) => {
     if (finished) return;
     if (!session.cancelled && acceptFollowups) {
       const next = Array.isArray(session.steers) ? session.steers.shift() : "";
       if (next) {
-        try {
-          session.status = "running";
-          session.tool = "";
-          session.assistantBreak = true;
-          session.turnResult = null;
-          launch(next);
-          return;
-        } catch {
-          session.steers.unshift(next);
-        }
+        session.status = "running";
+        session.tool = "";
+        session.assistantBreak = true;
+        session.turnResult = null;
+        running.set(chatId, { cancelled: false, pid: null });
+        launch(next).catch((error) => finish(false, error instanceof Error ? error.message : String(error)));
+        return;
       }
     }
     finished = true;
@@ -1789,7 +1853,13 @@ function startTurn(chatId, cwd, text, res, modelId, mode) {
     });
     res.end();
   };
-  const launch = (prompt) => {
+  const launch = async (prompt) => {
+    await syncChatStoreMode(chatId, session.cwd, session.mode, true);
+    if (finished) return;
+    if (session.cancelled) {
+      finish(false, "已终止");
+      return;
+    }
     const child = runCli(chatId, session.cwd, prompt, session.modelId, session.mode);
     running.set(chatId, child);
     const decoder = new StringDecoder("utf8");
@@ -1836,7 +1906,7 @@ function startTurn(chatId, cwd, text, res, modelId, mode) {
       finish(false, error.message);
     });
   };
-  launch(text);
+  launch(text).catch((error) => finish(false, error instanceof Error ? error.message : String(error)));
 }
 
 const server = http.createServer(async (req, res) => {
@@ -1943,7 +2013,10 @@ const server = http.createServer(async (req, res) => {
       const session = sessionOf(body.chatId);
       session.cwd = session.cwd || known.cwd || "";
       if (typeof body.modelId === "string") session.modelId = cleanModelId(body.modelId);
-      if (typeof body.mode === "string") session.mode = cleanMode(body.mode);
+      if (typeof body.mode === "string") {
+        session.mode = cleanMode(body.mode);
+        await syncChatStoreMode(body.chatId, session.cwd, session.mode);
+      }
       rememberChat(body.chatId, session.cwd);
       sendJson(res, 200, { ok: true, chatId: body.chatId, modelId: session.modelId, mode: session.mode || "" });
       return;
@@ -2108,13 +2181,15 @@ const server = http.createServer(async (req, res) => {
       const session = sessionOf(body.chatId);
       session.cancelled = true;
       session.note = "已终止";
-      if (process.platform === "win32") {
-        spawn(path.join(process.env.SystemRoot || "C:\\Windows", "System32", "taskkill.exe"), ["/PID", String(child.pid), "/T", "/F"], {
-          windowsHide: true,
-          stdio: "ignore",
-        });
-      } else {
-        child.kill("SIGTERM");
+      if (child.pid) {
+        if (process.platform === "win32") {
+          spawn(path.join(process.env.SystemRoot || "C:\\Windows", "System32", "taskkill.exe"), ["/PID", String(child.pid), "/T", "/F"], {
+            windowsHide: true,
+            stdio: "ignore",
+          });
+        } else if (typeof child.kill === "function") {
+          child.kill("SIGTERM");
+        }
       }
       sendJson(res, 200, { ok: true, stopped: true });
       return;

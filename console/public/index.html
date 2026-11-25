@@ -267,6 +267,9 @@
     .model-row .proxy-box { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; }
     .model-row .proxy-box[hidden] { display: none; }
     .model-row .proxy-note { font-size: 12px; color: var(--muted); }
+    .model-row .zoom-box { display: inline-flex; gap: 4px; align-items: center; margin-left: auto; }
+    .model-row .zoom-box button { min-width: 40px; padding: 6px 8px; }
+    .thread > *, #prompt > * { zoom: var(--thread-zoom, 1); }
     .actions { display: flex; flex-direction: column; gap: 8px; }
     #send, #cancel { display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 76px; line-height: 1.2; }
     #send small, #cancel small { font-size: 11px; opacity: 0.85; }
@@ -342,6 +345,11 @@
             <input id="proxy-url" type="text" placeholder="http://127.0.0.1:9910（留空为直连）" autocomplete="off" spellcheck="false">
             <button type="button" id="save-proxy" class="ghost">保存</button>
             <span id="proxy-note" class="proxy-note"></span>
+          </span>
+          <span class="zoom-box" role="group" aria-label="对话框字体大小">
+            <button type="button" id="zoom-out" class="ghost" title="对话框字体缩小">A-</button>
+            <button type="button" id="zoom-reset" class="ghost" title="恢复默认字体大小">100%</button>
+            <button type="button" id="zoom-in" class="ghost" title="对话框字体放大">A+</button>
           </span>
         </div>
         <textarea id="message" placeholder="发给当前这条 CLI 会话，Alt+S 发送。这条会话正忙时会进入队列。光标在首行或末行时，用上下键翻历史"></textarea>
@@ -2505,6 +2513,26 @@
         input.select();
       }
     });
+    const ZOOM_MIN = 80;
+    const ZOOM_MAX = 200;
+    const ZOOM_STEP = 10;
+    let threadZoom = Number(localStorage.getItem("webai-thread-zoom")) || 100;
+
+    function applyThreadZoom(next) {
+      threadZoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(next / ZOOM_STEP) * ZOOM_STEP));
+      const stick = state.stickToBottom;
+      document.documentElement.style.setProperty("--thread-zoom", String(threadZoom / 100));
+      localStorage.setItem("webai-thread-zoom", String(threadZoom));
+      document.querySelector("#zoom-reset").textContent = threadZoom + "%";
+      document.querySelector("#zoom-out").disabled = threadZoom <= ZOOM_MIN;
+      document.querySelector("#zoom-in").disabled = threadZoom >= ZOOM_MAX;
+      if (stick) followThreadBottom();
+    }
+
+    document.querySelector("#zoom-out").addEventListener("click", () => applyThreadZoom(threadZoom - ZOOM_STEP));
+    document.querySelector("#zoom-in").addEventListener("click", () => applyThreadZoom(threadZoom + ZOOM_STEP));
+    document.querySelector("#zoom-reset").addEventListener("click", () => applyThreadZoom(100));
+    applyThreadZoom(threadZoom);
     document.querySelector("#save-proxy").addEventListener("click", () => saveProxy());
     document.querySelector("#proxy-url").addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
