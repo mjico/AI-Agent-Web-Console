@@ -1097,8 +1097,15 @@
     }
 
     async function loadState() {
-      const response = await fetch("/api/state");
-      const json = await response.json();
+      let response;
+      try {
+        response = await fetch("/api/state");
+      } catch {
+        return;
+      }
+      if (!response.ok) return;
+      const json = await response.json().catch(() => null);
+      if (!json) return;
       const chats = json.chats || [];
       if (!state.chatId) {
         state.chatId = json.activeChatId || "";
@@ -1146,9 +1153,14 @@
 
     async function refresh() {
       if (!state.chatId) return;
-      const response = await fetch("/api/session/" + state.chatId);
-      if (!response.ok) return;
-      renderSnapshot(await response.json());
+      try {
+        const response = await fetch("/api/session/" + state.chatId);
+        if (!response.ok) return;
+        const data = await response.json();
+        renderSnapshot(data);
+      } catch {
+        return;
+      }
     }
 
     thread.addEventListener("scroll", () => {
@@ -1282,6 +1294,93 @@
       });
     }
 
+    function normalizeJsonNewlines(raw) {
+      let out = "";
+      let inString = false;
+      let escape = false;
+      for (let i = 0; i < raw.length; i += 1) {
+        const ch = raw[i];
+        if (inString) {
+          if (escape) {
+            escape = false;
+            out += ch;
+            continue;
+          }
+          if (ch === "\\") {
+            escape = true;
+            out += ch;
+            continue;
+          }
+          if (ch === "\"") {
+            inString = false;
+            out += ch;
+            continue;
+          }
+          if (ch === "\r") {
+            if (raw[i + 1] === "\n") i += 1;
+            out += "\\n";
+            continue;
+          }
+          if (ch === "\n") {
+            out += "\\n";
+            continue;
+          }
+          out += ch;
+          continue;
+        }
+        if (ch === "\"") inString = true;
+        out += ch;
+      }
+      return out;
+    }
+
+    function pullJsonValues(buffer) {
+      const values = [];
+      let valueStart = -1;
+      let inString = false;
+      let escape = false;
+      let depth = 0;
+      for (let i = 0; i < buffer.length; i += 1) {
+        const ch = buffer[i];
+        if (inString) {
+          if (escape) escape = false;
+          else if (ch === "\\") escape = true;
+          else if (ch === "\"") inString = false;
+          continue;
+        }
+        if (valueStart < 0) {
+          if (ch === "{" || ch === "[") {
+            valueStart = i;
+            depth = 1;
+          }
+          continue;
+        }
+        if (ch === "\"") inString = true;
+        else if (ch === "{" || ch === "[") depth += 1;
+        else if (ch === "}" || ch === "]") {
+          depth -= 1;
+          if (depth === 0) {
+            try {
+              values.push(JSON.parse(normalizeJsonNewlines(buffer.slice(valueStart, i + 1))));
+            } catch {
+              // One bad event must not abort the rest of the turn.
+            }
+            valueStart = -1;
+          }
+        }
+      }
+      return { values, rest: valueStart < 0 ? "" : buffer.slice(valueStart) };
+    }
+
+    function failureText(message) {
+      const text = String(message || "").trim();
+      if (!text) return "这一轮失败";
+      if (/Unterminated string in JSON|Unexpected end of JSON|Unexpected token|Bad control character in string literal/.test(text) && text.length < 240) {
+        return "这一轮失败";
+      }
+      return text;
+    }
+
     async function sendText(text) {
       if (!text || !state.chatId) return;
       if (state.running || state.remoteRunning) {
@@ -1310,58 +1409,57 @@
           return;
         }
         if (!response.ok) {
-          const json = await response.json();
-          addBubble("失败", json.message || "发送失败", "fail");
+          const json = await response.json().catch(() => ({}));
+          addBubble("失败", failureText(json.message || "发送失败"), "fail");
           setStatus("失败", "fail");
           return;
         }
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
+        const applyEvent = (item) => {
+          if (!item || state.chatId !== sentChat) return;
+          if (item.type === "model" && item.model) meta.textContent = state.cwd + " · " + state.chatId + " · " + item.model;
+          if (item.type === "thinking") toolLine.textContent = "思考中";
+          if (item.type === "tool") toolLine.textContent = item.done ? "当前没有工具调用" : "正在调用：" + item.name;
+          if (item.type === "step") {
+            rememberStep(item.step);
+            upsertActivity(item.step);
+          }
+          if (item.type === "assistant" && item.text) absorbAssistant(item.text, item.fresh);
+          if (item.type === "choice") showChoice(item.choice);
+          if (item.type === "usage") renderUsage(item.usage);
+          if (item.type === "done") {
+            const stopped = item.cancelled === true;
+            if (!stopped && item.ok === false) {
+              addBubble("失败", failureText(item.message), "fail");
+              setStatus("失败", "fail");
+            } else {
+              setStatus("空闲", "ok");
+            }
+            const note = document.createElement("p");
+            note.className = "note " + (!stopped && item.ok !== false ? "turn-end" : "turn-fail");
+            note.textContent = stopped ? "已终止" : item.ok === false ? "本轮失败" : "本轮已结束";
+            thread.append(note);
+            thread.scrollTop = thread.scrollHeight;
+          } else if (item.type === "error") {
+            addBubble("失败", failureText(item.message), "fail");
+            setStatus("失败", "fail");
+          }
+        };
         while (true) {
           const chunk = await reader.read();
           if (chunk.done) break;
           buffer += decoder.decode(chunk.value, { stream: true });
-          let nl = buffer.indexOf("\n");
-          while (nl >= 0) {
-            const line = buffer.slice(0, nl).trim();
-            buffer = buffer.slice(nl + 1);
-            if (line) {
-              const item = JSON.parse(line);
-              if (state.chatId !== sentChat) continue;
-              if (item.type === "model" && item.model) meta.textContent = state.cwd + " · " + state.chatId + " · " + item.model;
-              if (item.type === "thinking") toolLine.textContent = "思考中";
-              if (item.type === "tool") toolLine.textContent = item.done ? "当前没有工具调用" : "正在调用：" + item.name;
-              if (item.type === "step") {
-                rememberStep(item.step);
-                upsertActivity(item.step);
-              }
-              if (item.type === "assistant" && item.text) absorbAssistant(item.text, item.fresh);
-              if (item.type === "choice") showChoice(item.choice);
-              if (item.type === "usage") renderUsage(item.usage);
-              if (item.type === "done") {
-                const stopped = item.cancelled === true;
-                if (!stopped && item.ok === false) {
-                  addBubble("失败", item.message || "这一轮失败", "fail");
-                  setStatus("失败", "fail");
-                } else {
-                  setStatus("空闲", "ok");
-                }
-                const note = document.createElement("p");
-                note.className = "note " + (!stopped && item.ok !== false ? "turn-end" : "turn-fail");
-                note.textContent = stopped ? "已终止" : item.ok === false ? "本轮失败" : "本轮已结束";
-                thread.append(note);
-                thread.scrollTop = thread.scrollHeight;
-              } else if (item.type === "error") {
-                addBubble("失败", item.message || "这一轮失败", "fail");
-                setStatus("失败", "fail");
-              }
-            }
-            nl = buffer.indexOf("\n");
-          }
+          const pulled = pullJsonValues(buffer);
+          buffer = pulled.rest;
+          for (const item of pulled.values) applyEvent(item);
         }
+        buffer += decoder.decode();
+        const tail = pullJsonValues(buffer);
+        for (const item of tail.values) applyEvent(item);
       } catch (error) {
-        addBubble("失败", error.message, "fail");
+        addBubble("失败", failureText(error.message), "fail");
         setStatus("失败", "fail");
       } finally {
         if (state.chatId === sentChat) {

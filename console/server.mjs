@@ -4,6 +4,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -89,6 +90,11 @@ function sessionOf(chatId) {
   return session;
 }
 
+function discardBody(req) {
+  req.on("error", () => {});
+  req.resume();
+}
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -100,8 +106,8 @@ function readBody(req) {
       }
       try {
         resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
-      } catch (error) {
-        reject(error);
+      } catch {
+        reject(new Error("发送的数据不完整，请再试一次。"));
       }
     });
     req.on("error", reject);
@@ -870,6 +876,93 @@ function appendAssistant(session, piece, fresh) {
   return chunk.trim();
 }
 
+function visibleFailure(message) {
+  const text = String(message || "").trim();
+  if (!text) return "";
+  if (/Unterminated string in JSON|Unexpected end of JSON|Unexpected token|Bad control character in string literal/.test(text) && text.length < 240) {
+    return "这一轮失败";
+  }
+  return text;
+}
+
+function normalizeJsonNewlines(raw) {
+  let out = "";
+  let inString = false;
+  let escape = false;
+  for (let i = 0; i < raw.length; i += 1) {
+    const ch = raw[i];
+    if (inString) {
+      if (escape) {
+        escape = false;
+        out += ch;
+        continue;
+      }
+      if (ch === "\\") {
+        escape = true;
+        out += ch;
+        continue;
+      }
+      if (ch === "\"") {
+        inString = false;
+        out += ch;
+        continue;
+      }
+      if (ch === "\r") {
+        if (raw[i + 1] === "\n") i += 1;
+        out += "\\n";
+        continue;
+      }
+      if (ch === "\n") {
+        out += "\\n";
+        continue;
+      }
+      out += ch;
+      continue;
+    }
+    if (ch === "\"") inString = true;
+    out += ch;
+  }
+  return out;
+}
+
+function pullJsonValues(buffer) {
+  const values = [];
+  let valueStart = -1;
+  let inString = false;
+  let escape = false;
+  let depth = 0;
+  for (let i = 0; i < buffer.length; i += 1) {
+    const ch = buffer[i];
+    if (inString) {
+      if (escape) escape = false;
+      else if (ch === "\\") escape = true;
+      else if (ch === "\"") inString = false;
+      continue;
+    }
+    if (valueStart < 0) {
+      if (ch === "{" || ch === "[") {
+        valueStart = i;
+        depth = 1;
+      }
+      continue;
+    }
+    if (ch === "\"") inString = true;
+    else if (ch === "{" || ch === "[") depth += 1;
+    else if (ch === "}" || ch === "]") {
+      depth -= 1;
+      if (depth === 0) {
+        try {
+          values.push(JSON.parse(normalizeJsonNewlines(buffer.slice(valueStart, i + 1))));
+        } catch {
+          // Skip one broken value and keep reading the rest of the stream.
+        }
+        valueStart = -1;
+      }
+    }
+  }
+  return { values, rest: valueStart < 0 ? "" : buffer.slice(valueStart) };
+}
+
 function handleStreamLine(session, line, emit) {
   let event;
   try {
@@ -974,7 +1067,7 @@ function handleStreamLine(session, line, emit) {
     const failed = event.is_error === true || event.subtype === "error";
     session.status = failed ? "failed" : "idle";
     session.tool = "";
-    const message = failed ? (typeof event.result === "string" && event.result ? event.result : "这一轮失败") : "";
+    const message = failed ? visibleFailure(typeof event.result === "string" ? event.result : "") : "";
     if (message) session.live.push({ role: "error", text: message });
     rememberChat(session.chatId, session.cwd);
     const resultStep = {
@@ -1017,14 +1110,22 @@ function startTurn(chatId, cwd, text, res) {
     "cache-control": "no-store",
   });
   const emit = (event) => {
-    res.write(`${JSON.stringify(event)}\n`);
+    const line = JSON.stringify(event).replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
+    res.write(`${line}\n`);
   };
   emit({ type: "status", status: "running" });
   emit({ type: "user", text });
   const child = runCli(chatId, session.cwd, text);
   running.set(chatId, child);
+  const decoder = new StringDecoder("utf8");
   let buffer = "";
   let finished = false;
+  const takeStdout = (chunk, end) => {
+    buffer += end ? decoder.end(chunk) : decoder.write(chunk);
+    const pulled = pullJsonValues(buffer);
+    buffer = pulled.rest;
+    for (const event of pulled.values) handleStreamLine(session, JSON.stringify(event), emit);
+  };
   const finish = (ok, message) => {
     if (finished) return;
     finished = true;
@@ -1032,20 +1133,14 @@ function startTurn(chatId, cwd, text, res) {
     if (session.status === "running") session.status = ok ? "idle" : "failed";
     session.tool = "";
     if (child.cancelled) session.status = "idle";
-    if (!ok && message && !child.cancelled) emit({ type: "error", message });
+    const shown = visibleFailure(message);
+    if (!ok && shown && !child.cancelled) emit({ type: "error", message: shown });
     emit({ type: "status", status: session.status });
     if (child.cancelled) emit({ type: "done", ok: false, cancelled: true, message: "已终止" });
     res.end();
   };
   child.stdout.on("data", (chunk) => {
-    buffer += chunk.toString("utf8");
-    let nl = buffer.indexOf("\n");
-    while (nl >= 0) {
-      const line = buffer.slice(0, nl).trim();
-      buffer = buffer.slice(nl + 1);
-      if (line) handleStreamLine(session, line, emit);
-      nl = buffer.indexOf("\n");
-    }
+    takeStdout(chunk, false);
   });
   let errorText = "";
   child.stderr.on("data", (chunk) => {
@@ -1058,7 +1153,7 @@ function startTurn(chatId, cwd, text, res) {
       finish(false, "已终止");
       return;
     }
-    if (buffer.trim()) handleStreamLine(session, buffer.trim(), emit);
+    takeStdout(undefined, true);
     if (code && session.status !== "failed" && session.status !== "idle") {
       finish(false, errorText.trim() || `CLI 退出码 ${code}`);
       return;
@@ -1077,6 +1172,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (authRequired && req.method === "POST" && url.pathname === "/api/auth/setup") {
       if (loadAuth()) {
+        discardBody(req);
         sendJson(res, 409, { ok: false, message: "密码已经设置。" });
         return;
       }
@@ -1100,10 +1196,12 @@ const server = http.createServer(async (req, res) => {
     if (authRequired && req.method === "POST" && url.pathname === "/api/auth/login") {
       const ip = clientIp(req);
       if (loginBlocked(ip)) {
+        discardBody(req);
         sendJson(res, 429, { ok: false, message: "尝试次数过多，请稍后再试。" });
         return;
       }
       if (!loadAuth()) {
+        discardBody(req);
         sendJson(res, 409, { ok: false, message: "请先设置密码。" });
         return;
       }
@@ -1128,6 +1226,7 @@ const server = http.createServer(async (req, res) => {
         sendHtml(res, "login.html");
         return;
       }
+      discardBody(req);
       sendJson(res, 401, { ok: false, message: "需要登录。" });
       return;
     }
