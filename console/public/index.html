@@ -45,13 +45,70 @@
     main { display: grid; grid-template-columns: 300px 1fr; min-height: 0; }
     aside { padding: 16px; overflow: auto; border-right: 1px solid var(--line); }
     label { display: block; margin: 12px 0 6px; color: var(--muted); font-size: 13px; }
+    label.with-hint { display: flex; align-items: center; gap: 6px; }
+    .hint-icon {
+      position: relative; display: inline-flex; align-items: center; justify-content: center;
+      width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--line);
+      color: var(--muted); font-size: 11px; line-height: 1; cursor: help;
+    }
+    .hint-icon::after {
+      content: attr(data-tip); display: none; position: absolute; left: 0; top: calc(100% + 6px); z-index: 5;
+      width: 220px; padding: 8px 10px; border-radius: 8px; background: var(--ink); color: #fffdf8;
+      font-size: 12px; font-weight: 400; line-height: 1.45; white-space: normal;
+    }
+    .hint-icon:hover::after, .hint-icon:focus::after { display: block; }
     button, textarea { font: inherit; }
     button { border: 0; border-radius: 8px; padding: 8px 12px; background: var(--accent); color: var(--accent-ink); cursor: pointer; }
     button.secondary, .sessions button { background: transparent; color: var(--ink); border: 1px solid transparent; }
     button:disabled { opacity: 0.55; cursor: wait; }
     .sessions { list-style: none; margin: 8px 0 0; padding: 0; }
-    .sessions button { width: 100%; margin: 0 0 6px; text-align: left; }
-    .sessions button.active, .sessions button:hover { border-color: var(--line); background: #f7f3ec; }
+    .sessions > li { margin: 0 0 8px; }
+    .sessions .group-head {
+      display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 4px; align-items: center;
+      margin: 0 0 4px; padding: 2px 4px 2px 0; background: transparent; color: var(--ink);
+      border: 1px solid var(--line); border-radius: 8px;
+    }
+    .sessions .group-head:hover, .sessions .group-head.open { background: #f7f3ec; }
+    .sessions .group-head.busy { color: var(--run); background: #e5f0fb; border-color: #c5daf3; }
+    .sessions .group-head.busy .group-toggle,
+    .sessions .group-head.busy .count,
+    .sessions .group-head.busy .path,
+    .sessions .group-head.busy .mark,
+    .sessions .group-head.busy .group-add { color: var(--run); }
+    .sessions .group-head.busy:hover, .sessions .group-head.busy.open { background: #d4e7f8; border-color: #9ec3ea; }
+    .sessions .group-head.busy .group-add:hover { background: #fff; border-color: #9ec3ea; }
+    .sessions .group-toggle {
+      display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px; align-items: center;
+      width: 100%; margin: 0; padding: 4px 6px; text-align: left; background: transparent; color: var(--ink); border: 0;
+    }
+    .sessions .group-head .mark { color: var(--muted); font-family: Consolas, "Cascadia Mono", monospace; }
+    .sessions .group-head .path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+    .sessions .group-head .count { color: var(--muted); font-size: 12px; }
+    .sessions .group-add {
+      width: 24px; height: 24px; margin: 0; padding: 0; border-radius: 6px;
+      background: transparent; color: var(--ink); border: 1px solid transparent; font-size: 16px; line-height: 1;
+    }
+    .sessions .group-add:hover { border-color: var(--line); background: #fff; }
+    .sessions .group-body { list-style: none; margin: 0; padding: 0 0 0 8px; }
+    .sessions .group-body[hidden] { display: none; }
+    .sessions .chat-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 4px; align-items: center; margin: 0 0 4px; }
+    .sessions .chat-row button.open {
+      width: 100%; min-width: 0; margin: 0; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .sessions .chat-row input.rename-input {
+      width: 100%; min-width: 0; font: inherit; color: var(--ink);
+      border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; background: #fff;
+    }
+    .sessions .chat-row button.rename,
+    .sessions .chat-row button.detach {
+      width: 24px; height: 24px; margin: 0; padding: 0; border-radius: 6px;
+      font-size: 12px; line-height: 1; color: var(--muted); border: 1px solid transparent;
+    }
+    .sessions .chat-row button.rename:hover { color: var(--accent); border-color: var(--line); background: #f7f3ec; }
+    .sessions .chat-row button.open.active, .sessions .chat-row button.open:hover { border-color: var(--line); background: #f7f3ec; }
+    .sessions .chat-row button.open.busy { color: var(--run); background: #e5f0fb; border-color: #c5daf3; }
+    .sessions .chat-row button.open.busy.active, .sessions .chat-row button.open.busy:hover { background: #d4e7f8; border-color: #9ec3ea; }
+    .sessions .chat-row button.detach:hover { color: var(--fail); border-color: #f3c2c8; background: var(--fail-bg); }
     .tools { list-style: none; margin: 0; padding: 0; }
     .tools button, .steps button, .monitor-open { width: 100%; margin: 0 0 6px; text-align: left; background: transparent; color: var(--ink); border: 1px solid transparent; }
     .tools button:hover, .steps button:hover, .steps button.active, .monitor-open:hover { border-color: var(--line); background: #f7f3ec; }
@@ -82,7 +139,15 @@
     .activity.subagent { border-color: #7a4e9d; }
     #raw { margin: 0; padding: 16px 18px; overflow: auto; background: var(--bg); color: var(--ink); }
     .visual-head { margin: 0 0 14px; font-size: 16px; }
-    .field { margin: 0 0 14px; }
+    .step-section {
+      margin: 0 0 14px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fffdf8;
+    }
+    .step-section > h3 {
+      margin: 0 0 8px; font-size: 13px; color: var(--accent); font-weight: 700; letter-spacing: 0.02em;
+    }
+    .step-section .empty { margin: 0; color: var(--muted); font-size: 13px; }
+    .field { margin: 0 0 12px; }
+    .field:last-child { margin-bottom: 0; }
     .field h3, .diff h3 { margin: 8px 0 6px; font-size: 12px; color: var(--muted); font-weight: 600; }
     .field pre, .diff { margin: 0; white-space: pre-wrap; word-break: break-word; font: 13px/1.45 Consolas, "Cascadia Mono", monospace; }
     .diff-del, .diff-add { padding: 1px 8px; }
@@ -113,6 +178,11 @@
       word-break: break-word;
     }
     .thread { overflow: auto; scrollbar-gutter: stable; padding: 18px; min-height: 0; }
+    button.history-more {
+      display: block; width: 100%; max-width: 760px; margin: 0 0 14px; padding: 8px 12px;
+      background: transparent; color: var(--muted); border: 1px dashed var(--line); border-radius: 8px; text-align: center;
+    }
+    button.history-more:hover { color: var(--ink); border-color: var(--accent); background: #f7f3ec; }
     .turn-marker { height: 0; margin: 0; padding: 0; border: 0; overflow: hidden; }
     .bubble { max-width: 760px; margin: 0 0 12px; padding: 10px 12px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); white-space: pre-wrap; }
     .bubble.user { margin-left: auto; background: #d9ecea; border-color: #b7d8d5; }
@@ -146,7 +216,7 @@
       background: #f7f3ec;
       font-weight: 600;
     }
-    .note.turn-fail { border-color: #f3c2c8; background: var(--fail-bg); color: var(--fail); }
+    .note.turn-fail { border-color: #f3c2c8; background: var(--fail-bg); color: var(--fail); white-space: pre-wrap; word-break: break-word; font-weight: 500; }
     .choices { max-height: 42vh; overflow: auto; padding: 12px 18px; border-top: 1px solid var(--line); background: #e7f4f3; }
     .choices[hidden] { display: none; }
     .choices h2 { margin: 0; font-size: 15px; color: var(--accent); }
@@ -164,7 +234,39 @@
     .queue li { display: flex; gap: 8px; align-items: center; margin: 0 0 4px; }
     .queue span { flex: 1; overflow: hidden; color: var(--muted); font-size: 13px; white-space: nowrap; text-overflow: ellipsis; }
     .queue button { background: transparent; color: var(--ink); border: 1px solid var(--line); padding: 2px 8px; }
+    .new-chat { display: grid; gap: 6px; margin: 0 0 12px; }
+    .new-chat .path-row { display: grid; grid-template-columns: 1fr auto; gap: 6px; }
+    .new-chat input {
+      width: 100%; min-width: 0; font: inherit; color: var(--ink);
+      border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; background: #fff;
+    }
+    .new-chat button { background: transparent; color: var(--ink); border: 1px solid var(--line); padding: 6px 8px; }
+    .new-chat button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .new-chat button:disabled { opacity: 0.6; }
+    .new-chat .hint { margin: 0; }
+    .create-choice {
+      display: grid; gap: 6px; padding: 8px; border: 1px dashed var(--line); border-radius: 8px; background: #f7f3ec;
+    }
+    .create-choice[hidden] { display: none; }
+    .create-choice .actions-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .create-choice .meta { margin: 0; color: var(--muted); font-size: 12px; }
     .composer { display: grid; grid-template-columns: 1fr auto; gap: 8px; padding: 12px 18px 18px; }
+    .model-row { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .model-row label { margin: 0; }
+    .model-row select {
+      width: auto; max-width: 220px; min-width: 0; font: inherit; color: var(--ink); background: #fff;
+      border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px;
+    }
+    .model-row input[type="text"] {
+      width: 200px; max-width: 100%; min-width: 0; font: inherit; color: var(--ink); background: #fff;
+      border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px;
+    }
+    .model-row button.ghost {
+      background: transparent; color: var(--ink); border: 1px solid var(--line); padding: 6px 10px;
+    }
+    .model-row .proxy-box { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .model-row .proxy-box[hidden] { display: none; }
+    .model-row .proxy-note { font-size: 12px; color: var(--muted); }
     .actions { display: flex; flex-direction: column; gap: 8px; }
     #send, #cancel { display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 76px; line-height: 1.2; }
     #send small, #cancel small { font-size: 11px; opacity: 0.85; }
@@ -193,7 +295,23 @@
       <p id="tool" class="note">当前没有工具调用</p>
       <ul id="tools" class="tools"></ul>
       <p id="sync" class="note"></p>
-      <label>附着过的会话</label>
+      <label>新开会话</label>
+      <div class="new-chat">
+        <div class="path-row">
+          <input id="new-cwd" type="text" placeholder="工作目录，例如 D:\AI_Proj\hello_world" autocomplete="off" spellcheck="false">
+          <button type="button" id="pick-cwd">浏览</button>
+        </div>
+        <button type="button" id="create-chat" class="primary">开启 Agent</button>
+        <div id="create-choice" class="create-choice" hidden>
+          <p id="create-choice-text" class="meta"></p>
+          <div class="actions-row">
+            <button type="button" id="reuse-chat" class="primary">使用旧的</button>
+            <button type="button" id="force-new-chat">新建</button>
+          </div>
+        </div>
+        <p id="create-note" class="note hint"></p>
+      </div>
+      <label class="with-hint">附着过的会话<span class="hint-icon" tabindex="0" data-tip="同目录会折叠。移除只是离开网页列表，Cursor 对话还在，以后还能再附着。">?</span></label>
       <ul id="sessions" class="sessions"></ul>
     </aside>
     <section class="chat">
@@ -207,6 +325,25 @@
       <div id="choices" class="choices" hidden tabindex="0"></div>
       <ul id="queue" class="queue" hidden></ul>
       <form id="composer" class="composer">
+        <div class="model-row">
+          <label for="model">模型</label>
+          <select id="model">
+            <option value="">默认</option>
+          </select>
+          <label for="mode">模式</label>
+          <select id="mode" title="默认：不指定模式">
+            <option value="">默认</option>
+            <option value="agent">Agent</option>
+            <option value="plan">Plan</option>
+            <option value="ask">Ask</option>
+          </select>
+          <button type="button" id="toggle-proxy" class="ghost" title="设置 Cursor CLI 访问外网的 HTTP 代理">代理：直连</button>
+          <span id="proxy-box" class="proxy-box" hidden>
+            <input id="proxy-url" type="text" placeholder="http://127.0.0.1:9910（留空为直连）" autocomplete="off" spellcheck="false">
+            <button type="button" id="save-proxy" class="ghost">保存</button>
+            <span id="proxy-note" class="proxy-note"></span>
+          </span>
+        </div>
         <textarea id="message" placeholder="发给当前这条 CLI 会话，Alt+S 发送。这条会话正忙时会进入队列。光标在首行或末行时，用上下键翻历史"></textarea>
         <div class="actions">
           <button id="send" type="submit">发送<small>Alt+S</small></button>
@@ -245,6 +382,10 @@
     const state = {
       chatId: params.get("chat") || "",
       cwd: "",
+      modelId: "",
+      mode: "",
+      proxy: "",
+      promptRestoreKey: "",
       running: false,
       steps: [],
       selectedStep: 0,
@@ -260,8 +401,17 @@
       choiceFreeform: {},
       dismissedChoiceId: "",
       queues: {},
+      handed: {},
       remoteRunning: false,
+      idleWhileLocal: 0,
+      turnToken: 0,
+      stickToBottom: true,
+      historyTurns: 30,
+      anchorHistory: false,
+      historyLoading: false,
+      groupOpen: {},
     };
+    let pinningThread = false;
     const OTHER = "__other__";
 
     const meta = document.querySelector("#meta");
@@ -293,6 +443,17 @@
       return marker;
     }
 
+    function threadNearBottom() {
+      return thread.scrollHeight - thread.scrollTop - thread.clientHeight <= 80;
+    }
+
+    function followThreadBottom() {
+      if (!state.stickToBottom) return;
+      pinningThread = true;
+      thread.scrollTop = thread.scrollHeight;
+      pinningThread = false;
+    }
+
     function syncPromptFromScroll() {
       const markers = [...thread.querySelectorAll(".turn-marker")];
       if (!markers.length) return;
@@ -319,6 +480,13 @@
 
     function formatCount(value) {
       return (Number(value) || 0).toLocaleString("zh-CN");
+    }
+
+    function failNote(stopped, message) {
+      if (stopped) return "已终止";
+      const reason = String(message || "").trim();
+      if (!reason || reason === "本轮失败") return "本轮失败";
+      return "本轮失败：" + reason;
     }
 
     function formatDuration(ms) {
@@ -350,6 +518,16 @@
       offset: "起始行",
       head_limit: "最多几条",
       working_directory: "工作目录",
+      workingDirectory: "工作目录",
+      exitCode: "退出码",
+      stdout: "标准输出",
+      stderr: "标准错误",
+      interleavedOutput: "输出",
+      signal: "信号",
+      executionTime: "耗时毫秒",
+      localExecutionTimeMs: "本机耗时毫秒",
+      timeout: "超时毫秒",
+      isBackground: "后台",
     };
 
     function stepPayload(step) {
@@ -451,6 +629,196 @@
       });
     }
 
+    function resultBody(result) {
+      if (!result || typeof result !== "object") return null;
+      return result.success || result.failure || result.error || result;
+    }
+
+    function addSection(container, title) {
+      const section = document.createElement("section");
+      section.className = "step-section";
+      const head = document.createElement("h3");
+      head.textContent = title;
+      section.append(head);
+      container.append(section);
+      return section;
+    }
+
+    function sectionHasContent(section) {
+      return [...section.children].some((node) => node.tagName !== "H3");
+    }
+
+    function markEmpty(section, text) {
+      if (sectionHasContent(section)) return;
+      const empty = document.createElement("p");
+      empty.className = "empty";
+      empty.textContent = text;
+      section.append(empty);
+    }
+
+    function addInputFields(section, input, skip) {
+      if (!input || typeof input !== "object") return;
+      const ignored = skip || new Set();
+      for (const key of Object.keys(input)) {
+        if (ignored.has(key) || key === "name") continue;
+        addField(section, fieldLabels[key] || key, input[key]);
+      }
+    }
+
+    function addResultFields(section, result, preferred) {
+      if (!result || typeof result !== "object") return;
+      const used = new Set();
+      for (const item of preferred || []) {
+        if (result[item.key] == null || result[item.key] === "") continue;
+        addField(section, item.label, result[item.key]);
+        used.add(item.key);
+      }
+      for (const key of Object.keys(result)) {
+        if (used.has(key)) continue;
+        if (["isBackground"].includes(key)) continue;
+        addField(section, fieldLabels[key] || key, result[key]);
+      }
+    }
+
+    function fillLaunch(section, step, input) {
+      if (step.kind === "edit" && input) {
+        addField(section, "动作", step.name || "修改");
+        addField(section, "文件", input.path || input.file_path);
+        addInputFields(section, input, new Set(["old_string", "new_string", "contents", "path", "file_path", "name"]));
+        return;
+      }
+      if (step.kind === "shell" && input) {
+        addField(section, "说明", input.description || step.title);
+        addField(section, "命令", input.command);
+        addField(section, "工作目录", input.working_directory || input.workingDirectory || step.stat);
+        addInputFields(section, input, new Set(["description", "command", "working_directory", "workingDirectory", "name"]));
+        return;
+      }
+      if (step.kind === "read" && input) {
+        addField(section, "文件", input.path || input.file_path || step.title);
+        addInputFields(section, input, new Set(["path", "file_path", "name"]));
+        return;
+      }
+      if (step.kind === "search" && input) {
+        addField(section, "条件", input.pattern || input.glob_pattern || step.title);
+        addField(section, "范围", input.path || input.file_path || input.target_directory || step.stat);
+        addInputFields(section, input, new Set(["pattern", "glob_pattern", "path", "file_path", "target_directory", "name"]));
+        return;
+      }
+      if ((step.kind === "subagent" || step.promptHead) && input) {
+        addField(section, "任务", input.description || step.title);
+        addField(section, "类型", input.subagent_type || step.stat);
+        addField(section, "提示", input.prompt || input.task);
+        addInputFields(section, input, new Set(["description", "subagent_type", "prompt", "task", "name"]));
+        return;
+      }
+      if ((step.kind === "skill" || step.kind === "call") && input) {
+        addField(section, "来源", input.namespace);
+        addField(section, "名称", input.toolName || step.title);
+        addField(section, "参数", input.arguments || input);
+        return;
+      }
+      if (input) {
+        addInputFields(section, input);
+        return;
+      }
+      if (step.title) addField(section, "目标", step.title);
+      if (step.detail && step.kind !== "edit" && step.kind !== "shell") addField(section, "内容", step.detail);
+    }
+
+    function fillProcess(section, step, input) {
+      if (step.status === "running") addField(section, "状态", "正在执行…");
+      if (step.durationMs != null) addField(section, "耗时", formatDuration(step.durationMs));
+      if (step.kind === "edit" && input) {
+        const before = input.old_string || "";
+        const after = input.new_string || input.contents || "";
+        if (before || after) addDiff(section, before, after);
+        else if (step.detail) addField(section, "改动摘要", step.detail);
+        return;
+      }
+      if (step.kind === "shell") {
+        if (input && input.isBackground) addField(section, "执行方式", "后台运行");
+        if (input && input.timeout != null) addField(section, "超时毫秒", input.timeout);
+        return;
+      }
+      if (step.kind === "subagent" || step.promptHead) {
+        const log = document.createElement("pre");
+        log.className = "scroll-log";
+        const cached = step.promptHead ? scrollCache.get(step.promptHead) || "" : "";
+        log.textContent = cached || step.scroll || step.detail || (step.promptHead ? "正在读取子代理滚屏…" : "");
+        if (step.promptHead) {
+          log.dataset.head = step.promptHead;
+          if (state.chatId && !cached) loadScroll(step.promptHead, log);
+        }
+        if (log.textContent) section.append(log);
+        return;
+      }
+      if (step.kind === "thinking" && (step.scroll || step.detail || step.raw)) {
+        addField(section, "思考过程", step.scroll || step.detail || step.raw);
+      }
+    }
+
+    function fillOutcome(section, step, result) {
+      const flag = step.status === "running" ? "进行中" : step.status === "error" ? "失败" : "完成";
+      addField(section, "状态", flag);
+      if (step.stat) addField(section, "摘要", step.stat);
+      if (step.kind === "shell") {
+        const preferred = [
+          { key: "exitCode", label: "退出码" },
+          { key: "stdout", label: "标准输出" },
+          { key: "stderr", label: "标准错误" },
+          { key: "signal", label: "信号" },
+          { key: "executionTime", label: "耗时毫秒" },
+          { key: "localExecutionTimeMs", label: "本机耗时毫秒" },
+        ];
+        if (!String((result && result.stdout) || "").trim() && !String((result && result.stderr) || "").trim()) {
+          preferred.push({ key: "interleavedOutput", label: "输出" });
+          preferred.push({ key: "output", label: "输出" });
+        }
+        if (result) {
+          const slim = { ...result };
+          if (String(slim.stdout || "").trim() || String(slim.stderr || "").trim()) {
+            delete slim.interleavedOutput;
+            delete slim.output;
+          }
+          addResultFields(section, slim, preferred);
+        }
+        return;
+      }
+      if (step.kind === "edit") {
+        if (result) addResultFields(section, result);
+        else if (step.status !== "running") addField(section, "结果", step.status === "error" ? "修改失败" : "文件已按上面的改动更新");
+        return;
+      }
+      if (step.kind === "read") {
+        addResultFields(section, result, [
+          { key: "content", label: "文件内容" },
+          { key: "contents", label: "文件内容" },
+          { key: "text", label: "文件内容" },
+        ]);
+        return;
+      }
+      if (step.kind === "search") {
+        addResultFields(section, result, [
+          { key: "matches", label: "匹配结果" },
+          { key: "files", label: "文件列表" },
+          { key: "output", label: "输出" },
+          { key: "content", label: "结果" },
+        ]);
+        return;
+      }
+      if (step.kind === "result") {
+        if (result) addResultFields(section, result);
+        else if (step.raw && step.raw.startsWith("{")) {
+          const parsed = stepPayload(step);
+          if (parsed) addResultFields(section, parsed);
+        }
+        return;
+      }
+      if (result) addResultFields(section, result);
+      else if (step.scroll && step.kind !== "subagent" && !step.promptHead) addField(section, "输出", step.scroll);
+    }
+
     function renderStepView(container, step) {
       container.replaceChildren();
       const head = document.createElement("h2");
@@ -460,32 +828,16 @@
       container.append(head);
       const parsed = stepPayload(step);
       const input = parsed && parsed.input && typeof parsed.input === "object" ? parsed.input : null;
-      if (step.kind === "edit" && input && (input.old_string || input.new_string)) addDiff(container, input.old_string, input.new_string);
-      const log = document.createElement("pre");
-      log.className = "scroll-log";
-      const cached = step.promptHead ? scrollCache.get(step.promptHead) : "";
-      log.textContent = cached || step.scroll || step.detail || "";
-      if (log.textContent || step.promptHead) container.append(log);
-      if (step.promptHead && state.chatId && !cached) {
-        log.dataset.head = step.promptHead;
-        if (!log.textContent) log.textContent = "正在读取子代理滚屏…";
-        loadScroll(step.promptHead, log);
-      } else if (!log.textContent) {
-        if (input && typeof input === "object") {
-          const skip = new Set(["old_string", "new_string", "name"]);
-          for (const key of Object.keys(input)) {
-            if (!skip.has(key)) addField(container, fieldLabels[key] || key, input[key]);
-          }
-        } else if (step.raw && !step.raw.startsWith("{")) {
-          addField(container, "内容", step.raw);
-        }
-      }
-      if (container.children.length === 1) {
-        const empty = document.createElement("p");
-        empty.className = "note";
-        empty.textContent = "这一步没有更多内容。";
-        container.append(empty);
-      }
+      const result = parsed && parsed.result ? resultBody(parsed.result) : null;
+      const launch = addSection(container, "发起");
+      const process = addSection(container, "经过");
+      const outcome = addSection(container, "结果");
+      fillLaunch(launch, step, input);
+      fillProcess(process, step, input);
+      fillOutcome(outcome, step, result);
+      markEmpty(launch, "没有记录到发起内容。");
+      markEmpty(process, step.status === "running" ? "还在执行，过程会陆续出现。" : "没有额外过程记录。");
+      markEmpty(outcome, step.status === "running" ? "还没有结果。" : "没有记录到结果。");
     }
 
     const stepFilters = [
@@ -716,7 +1068,7 @@
         paintMessage(target);
         bubble.classList.add("answer");
       }
-      thread.scrollTop = thread.scrollHeight;
+      followThreadBottom();
     }
 
     function addBubble(who, text, kind) {
@@ -744,7 +1096,9 @@
 
     function renderSnapshot(data) {
       state.cwd = data.cwd || state.cwd;
-      meta.textContent = (data.cwd || "未设置工作目录") + " · " + (data.chatId || "无会话") + (data.model ? " · " + data.model : "");
+      state.name = data.name || state.name || "";
+      state.preview = data.preview || state.preview || "";
+      meta.textContent = (data.cwd || "未设置工作目录") + " · " + sessionLabel(data) + (data.model ? " · " + data.model : "");
       state.remoteRunning = Boolean(data.running);
       const statusText = data.status === "running" || data.running ? "处理中" : data.status === "failed" ? "失败" : "空闲";
       setStatus(statusText, data.status === "failed" ? "fail" : data.status === "running" || data.running ? "run" : "ok");
@@ -761,13 +1115,21 @@
         data.omitted || 0,
         ...entries.map((entry) => [entry.type, entry.id || "", entry.title || "", entry.text || "", entry.detail || "", entry.promptHead || "", entry.scroll || ""].join("\n")),
       ].join("\u0001");
+      applyModeSelect(data.mode || "");
+      restoreFailedPrompt(data);
       if (state.running || viewKey === state.viewKey) return;
-      state.viewKey = viewKey;
+      const savedTop = thread.scrollTop;
+      const savedHeight = thread.scrollHeight;
+      const previous = [...thread.childNodes];
       thread.replaceChildren();
+      try {
       if (data.omitted) {
-        const older = document.createElement("p");
-        older.className = "note";
-        older.textContent = "只显示最近几轮。更早的 " + data.omitted + " 条对话没有加载。";
+        const older = document.createElement("button");
+        older.type = "button";
+        older.className = "history-more";
+        older.textContent = "加载更多历史记录";
+        older.title = "继续往前加载，直到第一条";
+        older.addEventListener("click", () => loadOlderHistory());
         thread.append(older);
       }
       let lastQuestion = "";
@@ -796,10 +1158,12 @@
       syncInputHistory(entries);
       const pending = state.pendingQuestion.trim();
       if (pending) {
-        const lastUser = [...entries].reverse().find((entry) => entry.type === "user");
-        const shown = String(lastUser && lastUser.text || "").trim();
-        const clipped = shown.replace(/\n…（已截断）$/, "");
-        const kept = shown === pending || shown.startsWith(pending) || (shown !== clipped && pending.startsWith(clipped));
+        const kept = entries.some((entry) => {
+          if (entry.type !== "user") return false;
+          const shown = String(entry.text || "").trim();
+          const clipped = shown.replace(/\n…（已截断）$/, "");
+          return shown === pending || shown.startsWith(pending) || (shown !== clipped && pending.startsWith(clipped));
+        });
         if (kept) state.pendingQuestion = "";
         else {
           addBubble("你", state.pendingQuestion, "user");
@@ -807,15 +1171,44 @@
         }
       }
       setPrompt(lastQuestion);
-      thread.scrollTop = thread.scrollHeight;
+      if (state.anchorHistory) {
+        pinningThread = true;
+        thread.scrollTop = savedTop + Math.max(0, thread.scrollHeight - savedHeight);
+        pinningThread = false;
+        state.anchorHistory = false;
+      } else if (state.stickToBottom) followThreadBottom();
+      else {
+        pinningThread = true;
+        thread.scrollTop = savedTop;
+        pinningThread = false;
+      }
       syncPromptFromScroll();
       if (data.pendingChoice) showChoice(data.pendingChoice);
+      state.viewKey = viewKey;
+      } catch (error) {
+        thread.replaceChildren(...previous);
+        state.viewKey = "";
+      }
+    }
+
+    function stepKey(id) {
+      return String(id || "").replace(/[\r\n\t]+/g, " ").trim();
+    }
+
+    function findActivity(step) {
+      const key = stepKey(step && step.id);
+      if (!key) return null;
+      for (const node of thread.querySelectorAll(".activity")) {
+        if (node.dataset.step === key) return node;
+      }
+      return null;
     }
 
     function addActivity(step) {
       const row = document.createElement("div");
       row.className = "activity " + (step.kind || "tool");
-      if (step.id) row.dataset.step = step.id;
+      const key = stepKey(step.id);
+      if (key) row.dataset.step = key;
       const button = document.createElement("button");
       button.type = "button";
       button.className = "line";
@@ -823,8 +1216,10 @@
       button.textContent = [step.label || step.name || "步骤", step.title || "", step.stat || "", flag, formatDuration(step.durationMs)].filter(Boolean).join("  ·  ");
       const detail = document.createElement("div");
       detail.className = "detail";
-      renderStepView(detail, step);
-      button.addEventListener("click", () => row.classList.toggle("open"));
+      button.addEventListener("click", () => {
+        row.classList.toggle("open");
+        if (row.classList.contains("open")) renderStepView(detail, step);
+      });
       row.append(button, detail);
       thread.append(row);
       return row;
@@ -832,17 +1227,17 @@
 
     function upsertActivity(step) {
       if (!step || step.kind === "thinking") return;
-      const existing = step.id ? thread.querySelector("[data-step='" + step.id.replace(/'/g, "") + "']") : null;
+      const existing = findActivity(step);
       if (!existing) {
         addActivity(step);
-        thread.scrollTop = thread.scrollHeight;
+        followThreadBottom();
         return;
       }
       existing.className = "activity " + (step.kind || "tool") + (existing.classList.contains("open") ? " open" : "");
       const button = existing.querySelector("button");
       const flag = step.status === "running" ? "进行中" : step.status === "error" ? "失败" : "";
       button.textContent = [step.label || step.name || "步骤", step.title || "", step.stat || "", flag, formatDuration(step.durationMs)].filter(Boolean).join("  ·  ");
-      renderStepView(existing.querySelector(".detail"), step);
+      if (existing.classList.contains("open")) renderStepView(existing.querySelector(".detail"), step);
     }
 
     function choiceQuestions() {
@@ -1089,11 +1484,305 @@
       state.chatId = chatId;
       state.viewKey = "";
       state.pendingQuestion = "";
+      state.inputHistory = [];
+      state.historyCursor = -1;
+      state.historyDraft = "";
+      state.choice = null;
+      state.dismissedChoiceId = "";
+      renderChoices();
+      renderQueue();
       state.steps = [];
       state.selectedStep = 0;
       state.running = false;
+      state.stickToBottom = true;
+      state.historyTurns = 30;
+      state.anchorHistory = false;
+      document.querySelector("#cancel").hidden = true;
       history.replaceState(null, "", "/?chat=" + chatId);
       refresh();
+    }
+
+    let pendingCreate = null;
+
+    function setCreateNote(text, fail) {
+      const note = document.querySelector("#create-note");
+      note.textContent = text || "";
+      note.style.color = fail ? "var(--fail)" : "";
+    }
+
+    function hideCreateChoice() {
+      pendingCreate = null;
+      const panel = document.querySelector("#create-choice");
+      if (panel) panel.hidden = true;
+    }
+
+    function showCreateChoice(cwd, chats) {
+      const list = Array.isArray(chats) ? chats.filter((item) => item && item.chatId) : [];
+      if (!list.length) {
+        hideCreateChoice();
+        return;
+      }
+      pendingCreate = { cwd, chatId: list[0].chatId, chats: list };
+      const panel = document.querySelector("#create-choice");
+      const text = document.querySelector("#create-choice-text");
+      const turns = list[0].usage && list[0].usage.turns ? list[0].usage.turns + " 轮" : "尚无对话";
+      const extra = list.length > 1 ? "，另有 " + (list.length - 1) + " 条同目录会话" : "";
+      text.textContent = "已有「" + sessionLabel(list[0]) + "」（" + turns + "）" + extra + "。用旧的还是新建？";
+      panel.hidden = false;
+    }
+
+    async function pickCwd() {
+      const box = document.querySelector("#new-cwd");
+      const pick = document.querySelector("#pick-cwd");
+      hideCreateChoice();
+      pick.disabled = true;
+      setCreateNote("正在打开文件夹选择…");
+      try {
+        const response = await fetch("/api/pick-folder", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ cwd: box.value.trim() || state.cwd || "" }),
+        });
+        const json = await response.json();
+        if (json.cancelled) {
+          setCreateNote("");
+          return;
+        }
+        if (!response.ok || !json.ok) {
+          setCreateNote(json.message || "没有选择文件夹。", true);
+          return;
+        }
+        box.value = json.cwd || "";
+        setCreateNote("");
+      } catch (error) {
+        setCreateNote(error.message || "无法打开文件夹选择。", true);
+      } finally {
+        pick.disabled = false;
+      }
+    }
+
+    async function reuseExistingChat() {
+      if (!pendingCreate || !pendingCreate.chatId) return;
+      const box = document.querySelector("#new-cwd");
+      const button = document.querySelector("#create-chat");
+      const pick = document.querySelector("#pick-cwd");
+      const reuse = document.querySelector("#reuse-chat");
+      const force = document.querySelector("#force-new-chat");
+      const cwd = pendingCreate.cwd;
+      const chatId = pendingCreate.chatId;
+      button.disabled = true;
+      pick.disabled = true;
+      reuse.disabled = true;
+      force.disabled = true;
+      setCreateNote("正在附着旧会话…");
+      try {
+        const response = await fetch("/api/attach", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ chatId, cwd }),
+        });
+        const json = await response.json();
+        if (!response.ok || !json.ok) {
+          setCreateNote(json.message || "附着失败。", true);
+          return;
+        }
+        box.value = json.cwd || cwd;
+        hideCreateChoice();
+        setCreateNote("已继续 " + chatId.slice(0, 8));
+        followChat(chatId);
+        await loadState();
+      } catch (error) {
+        setCreateNote(error.message || "附着失败。", true);
+      } finally {
+        button.disabled = false;
+        pick.disabled = false;
+        reuse.disabled = false;
+        force.disabled = false;
+      }
+    }
+
+    async function createChatFromPage(forceNew) {
+      const box = document.querySelector("#new-cwd");
+      const button = document.querySelector("#create-chat");
+      const pick = document.querySelector("#pick-cwd");
+      const reuse = document.querySelector("#reuse-chat");
+      const force = document.querySelector("#force-new-chat");
+      const cwd = (pendingCreate && forceNew ? pendingCreate.cwd : box.value.trim());
+      if (!cwd) {
+        hideCreateChoice();
+        setCreateNote("请先填写或浏览工作目录。", true);
+        box.focus();
+        return;
+      }
+      if (!forceNew) hideCreateChoice();
+      button.disabled = true;
+      pick.disabled = true;
+      if (reuse) reuse.disabled = true;
+      if (force) force.disabled = true;
+      setCreateNote(forceNew ? "正在创建新会话…" : "正在检查目录…");
+      try {
+        const response = await fetch("/api/create", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ cwd, forceNew: Boolean(forceNew) }),
+        });
+        const json = await response.json();
+        if (json.existing && json.chatId) {
+          box.value = json.cwd || cwd;
+          showCreateChoice(json.cwd || cwd, json.chats || [{ chatId: json.chatId, usage: {} }]);
+          setCreateNote("");
+          return;
+        }
+        if (!response.ok || !json.ok || !json.chatId) {
+          setCreateNote(json.message || "创建失败。", true);
+          return;
+        }
+        box.value = json.cwd || cwd;
+        hideCreateChoice();
+        setCreateNote("已开启 " + json.chatId.slice(0, 8));
+        followChat(json.chatId);
+        await loadState();
+      } catch (error) {
+        setCreateNote(error.message || "创建失败。", true);
+      } finally {
+        button.disabled = false;
+        pick.disabled = false;
+        if (reuse) reuse.disabled = false;
+        if (force) force.disabled = false;
+      }
+    }
+
+    function modeTip(mode) {
+      if (mode === "agent") return "Agent：可以改文件、跑命令";
+      if (mode === "plan") return "Plan：只分析并给出计划，不改文件";
+      if (mode === "ask") return "Ask：只回答问题，不改文件";
+      return "默认：不指定模式";
+    }
+
+    function applyModeSelect(mode) {
+      const select = document.querySelector("#mode");
+      if (!select || document.activeElement === select) return;
+      const value = mode === "agent" || mode === "plan" || mode === "ask" ? mode : "";
+      state.mode = value;
+      select.value = value;
+      select.title = modeTip(value);
+    }
+
+    function restoreComposer(text) {
+      const box = document.querySelector("#message");
+      const value = String(text || "");
+      if (!box || !value.trim() || box.value.trim()) return;
+      box.value = value;
+    }
+
+    function restoreFailedPrompt(data) {
+      const text = data && data.pendingPrompt ? String(data.pendingPrompt) : "";
+      if (!text || state.running || data.running) return;
+      const key = state.chatId + "\n" + text;
+      if (state.promptRestoreKey === key) return;
+      state.promptRestoreKey = key;
+      restoreComposer(text);
+    }
+
+    function applyModelSelect(modelId) {
+      const select = document.querySelector("#model");
+      if (!select || document.activeElement === select) return;
+      const id = modelId || "";
+      state.modelId = id;
+      if ([...select.options].some((option) => option.value === id)) select.value = id;
+    }
+
+    function fillModelSelect(models) {
+      const select = document.querySelector("#model");
+      const current = state.modelId || "";
+      const fallback = document.createElement("option");
+      fallback.value = "";
+      fallback.textContent = "默认";
+      select.replaceChildren(fallback);
+      for (const model of models || []) {
+        if (!model || !model.id) continue;
+        const option = document.createElement("option");
+        option.value = model.id;
+        const suffix = model.isDefault ? "（默认）" : "";
+        option.textContent = (model.name || model.id) + suffix;
+        select.append(option);
+      }
+      applyModelSelect(current);
+    }
+
+    async function loadModels() {
+      const select = document.querySelector("#model");
+      try {
+        const response = await fetch("/api/models");
+        const json = await response.json();
+        if (!response.ok || !json.ok) throw new Error(json.message || "模型列表加载失败");
+        fillModelSelect(json.models || []);
+        select.title = "下一条消息使用这个模型";
+      } catch (error) {
+        select.title = error.message || "模型列表加载失败";
+      }
+    }
+
+    async function saveModel(chatId, modelId) {
+      if (!chatId) return;
+      await fetch("/api/model", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ chatId, modelId }),
+      });
+    }
+
+    async function saveMode(chatId, mode) {
+      if (!chatId) return;
+      await fetch("/api/model", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ chatId, mode }),
+      });
+    }
+
+    function applyProxyState(proxy) {
+      const value = String(proxy || "").trim();
+      state.proxy = value;
+      const btn = document.querySelector("#toggle-proxy");
+      const input = document.querySelector("#proxy-url");
+      if (btn) {
+        const short = value.replace(/^https?:\/\//i, "");
+        btn.textContent = value ? "代理：" + short : "代理：直连";
+        btn.title = value ? "当前代理 " + value + "（点击修改）" : "设置 Cursor CLI 访问外网的 HTTP 代理";
+      }
+      if (input && document.activeElement !== input && document.querySelector("#proxy-box")?.hidden) {
+        input.value = value;
+      }
+    }
+
+    async function saveProxy() {
+      const input = document.querySelector("#proxy-url");
+      const note = document.querySelector("#proxy-note");
+      if (!input) return;
+      note.textContent = "保存中…";
+      note.style.color = "";
+      try {
+        const response = await fetch("/api/proxy", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ proxy: input.value }),
+        });
+        const json = await response.json();
+        if (!response.ok || !json.ok) {
+          note.textContent = json.message || "保存失败";
+          note.style.color = "var(--fail)";
+          return;
+        }
+        applyProxyState(json.proxy || "");
+        input.value = json.proxy || "";
+        note.textContent = json.proxy ? "已启用，下一轮生效" : "已改为直连";
+        note.style.color = "";
+        loadModels();
+      } catch (error) {
+        note.textContent = error.message || "保存失败";
+        note.style.color = "var(--fail)";
+      }
     }
 
     async function loadState() {
@@ -1106,7 +1795,13 @@
       if (!response.ok) return;
       const json = await response.json().catch(() => null);
       if (!json) return;
+      applyProxyState(json.proxy || "");
       const chats = json.chats || [];
+      const current = chats.find((chat) => chat.chatId === state.chatId);
+      if (current) {
+        applyModelSelect(current.modelId || "");
+        applyModeSelect(current.mode || "");
+      }
       if (!state.chatId) {
         state.chatId = json.activeChatId || "";
         if (state.chatId) history.replaceState(null, "", "/?chat=" + state.chatId);
@@ -1116,54 +1811,270 @@
       }
       seenChatIds = new Set(chats.map((chat) => chat.chatId));
       state.remoteRunning = (json.runningChatIds || []).includes(state.chatId);
+      if (state.running && !state.remoteRunning) {
+        state.idleWhileLocal += 1;
+        if (state.idleWhileLocal >= 3) {
+          state.turnToken += 1;
+          state.running = false;
+        }
+      } else {
+        state.idleWhileLocal = 0;
+      }
       const cancel = document.querySelector("#cancel");
       if (cancel) cancel.hidden = !(state.running || state.remoteRunning);
-      sessions.replaceChildren();
-      for (const chat of chats) {
-        const item = document.createElement("li");
-        const button = document.createElement("button");
-        button.type = "button";
-        const busy = (json.runningChatIds || []).includes(chat.chatId);
-        button.className = chat.chatId === state.chatId ? "active" : "";
-        button.textContent = (busy ? "处理中 · " : "") + chat.chatId.slice(0, 8) + " · " + (chat.cwd || "");
-        button.addEventListener("click", () => {
-          state.chatId = chat.chatId;
+      try { renderSessionGroups(chats, json.runningChatIds || []); } catch { /* 列表失败也不要挡住发送 */ }
+      if (!state.running && !state.remoteRunning) {
+        if (state.handed[state.chatId]) state.handed[state.chatId] = [];
+        drainQueue();
+      } else {
+        flushQueueToServer();
+      }
+    }
+
+    function cwdKey(cwd) {
+      return String(cwd || "（未设置目录）");
+    }
+
+    function shortCwd(cwd) {
+      const text = String(cwd || "（未设置目录）");
+      const parts = text.replace(/[\\/]+$/, "").split(/[\\/]/);
+      if (parts.length <= 2) return text;
+      return parts.slice(-2).join("\\");
+    }
+
+    function isGroupOpen(cwd, chats) {
+      const key = cwdKey(cwd);
+      if (Object.prototype.hasOwnProperty.call(state.groupOpen, key)) return state.groupOpen[key];
+      return chats.some((chat) => chat.chatId === state.chatId);
+    }
+
+    function selectChat(chatId) {
+      state.chatId = chatId;
+      state.viewKey = "";
+      state.pendingQuestion = "";
+      state.inputHistory = [];
+      state.historyCursor = -1;
+      state.historyDraft = "";
+      state.choice = null;
+      state.dismissedChoiceId = "";
+      renderChoices();
+      renderQueue();
+      state.steps = [];
+      state.selectedStep = 0;
+      state.running = false;
+      state.stickToBottom = true;
+      state.historyTurns = 30;
+      state.anchorHistory = false;
+      document.querySelector("#cancel").hidden = true;
+      history.replaceState(null, "", "/?chat=" + chatId);
+      refresh();
+      loadState();
+    }
+
+    async function loadOlderHistory() {
+      if (state.historyLoading) return;
+      state.historyLoading = true;
+      state.historyTurns += 30;
+      state.anchorHistory = true;
+      state.stickToBottom = false;
+      state.viewKey = "";
+      try {
+        await refresh();
+      } finally {
+        state.historyLoading = false;
+      }
+    }
+
+    async function detachChat(chatId) {
+      if (!chatId) return;
+      try {
+        const response = await fetch("/api/detach", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ chatId }),
+        });
+        const json = await response.json();
+        if (!response.ok || !json.ok) {
+          setCreateNote(json.message || "无法移除。", true);
+          return;
+        }
+        if (state.chatId === chatId) {
+          state.chatId = json.activeChatId || "";
           state.viewKey = "";
           state.pendingQuestion = "";
-          state.inputHistory = [];
-          state.historyCursor = -1;
-          state.historyDraft = "";
-          state.choice = null;
-          state.dismissedChoiceId = "";
-          renderChoices();
-          renderQueue();
-          state.steps = [];
-          state.selectedStep = 0;
-          state.running = false;
-          document.querySelector("#cancel").hidden = true;
-          history.replaceState(null, "", "/?chat=" + chat.chatId);
-          refresh();
-          loadState();
+          if (state.chatId) history.replaceState(null, "", "/?chat=" + state.chatId);
+          else history.replaceState(null, "", "/");
+        }
+        await loadState();
+        if (state.chatId) await refresh();
+        else {
+          meta.textContent = "等待附着到 Cursor CLI 会话";
+          thread.replaceChildren();
+          setPrompt("");
+        }
+      } catch (error) {
+        setCreateNote(error.message || "无法移除。", true);
+      }
+    }
+
+    function sessionLabel(chat) {
+      if (!chat) return "无会话";
+      const name = String(chat.name || "").trim();
+      const preview = String(chat.preview || "").trim();
+      return name || preview || (chat.chatId ? chat.chatId.slice(0, 8) : "无会话");
+    }
+
+    async function renameChat(chatId, name) {
+      const response = await fetch("/api/rename", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ chatId, name }),
+      });
+      const json = await response.json();
+      if (!response.ok || !json.ok) throw new Error(json.message || "改名失败。");
+      if (state.chatId === chatId) {
+        state.name = json.name || "";
+        state.preview = json.preview || "";
+      }
+      return json;
+    }
+
+    function renderSessionGroups(chats, runningIds) {
+      if (document.activeElement && document.activeElement.classList.contains("rename-input")) return;
+      const groups = new Map();
+      for (const chat of chats) {
+        const key = cwdKey(chat.cwd);
+        if (!groups.has(key)) groups.set(key, { cwd: chat.cwd || "（未设置目录）", chats: [] });
+        groups.get(key).chats.push(chat);
+      }
+      sessions.replaceChildren();
+      for (const group of groups.values()) {
+        const open = isGroupOpen(group.cwd, group.chats);
+        const busyCount = group.chats.filter((chat) => runningIds.includes(chat.chatId)).length;
+        const item = document.createElement("li");
+        const head = document.createElement("div");
+        head.className = "group-head" + (open ? " open" : "") + (busyCount ? " busy" : "");
+        const toggle = document.createElement("button");
+        toggle.type = "button";
+        toggle.className = "group-toggle";
+        const mark = document.createElement("span");
+        mark.className = "mark";
+        mark.textContent = open ? "▼" : "▶";
+        const pathLabel = document.createElement("span");
+        pathLabel.className = "path";
+        pathLabel.title = group.cwd;
+        pathLabel.textContent = shortCwd(group.cwd);
+        toggle.append(mark, pathLabel);
+        toggle.addEventListener("click", () => {
+          state.groupOpen[cwdKey(group.cwd)] = !open;
+          renderSessionGroups(chats, runningIds);
         });
-        item.append(button);
+        const count = document.createElement("span");
+        count.className = "count";
+        count.textContent = busyCount ? group.chats.length + " · 忙" : String(group.chats.length);
+        head.append(toggle, count);
+        if (group.cwd && group.cwd !== "（未设置目录）") {
+          const add = document.createElement("button");
+          add.type = "button";
+          add.className = "group-add";
+          add.textContent = "+";
+          add.title = "在这个目录新建会话";
+          add.addEventListener("click", () => {
+            state.groupOpen[cwdKey(group.cwd)] = true;
+            document.querySelector("#new-cwd").value = group.cwd;
+            hideCreateChoice();
+            createChatFromPage(true);
+          });
+          head.append(add);
+        }
+        const body = document.createElement("ul");
+        body.className = "group-body";
+        body.hidden = !open;
+        for (const chat of group.chats) {
+          const row = document.createElement("li");
+          row.className = "chat-row";
+          const busy = runningIds.includes(chat.chatId);
+          const openBtn = document.createElement("button");
+          openBtn.type = "button";
+          openBtn.className = "open" + (chat.chatId === state.chatId ? " active" : "") + (busy ? " busy" : "");
+          const label = sessionLabel(chat);
+          openBtn.textContent = (busy ? "处理中 · " : "") + label;
+          openBtn.title = (chat.name ? chat.chatId + " · " : "") + (chat.cwd || "");
+          openBtn.addEventListener("click", () => selectChat(chat.chatId));
+          const rename = document.createElement("button");
+          rename.type = "button";
+          rename.className = "rename";
+          rename.textContent = "R";
+          rename.title = "会话重命名";
+          rename.addEventListener("click", (event) => {
+            event.stopPropagation();
+            const input = document.createElement("input");
+            input.className = "rename-input";
+            input.value = chat.name || chat.preview || "";
+            input.maxLength = 80;
+            input.setAttribute("aria-label", "会话名称");
+            const finish = async (save) => {
+              input.removeEventListener("blur", onBlur);
+              if (!save) {
+                await loadState();
+                return;
+              }
+              try {
+                await renameChat(chat.chatId, input.value);
+                await loadState();
+                if (state.chatId === chat.chatId) await refresh();
+              } catch (error) {
+                setCreateNote(error.message || "改名失败。", true);
+                await loadState();
+              }
+            };
+            const onBlur = () => finish(true);
+            input.addEventListener("keydown", (keyEvent) => {
+              if (keyEvent.key === "Enter") {
+                keyEvent.preventDefault();
+                input.removeEventListener("blur", onBlur);
+                finish(true);
+              } else if (keyEvent.key === "Escape") {
+                keyEvent.preventDefault();
+                input.removeEventListener("blur", onBlur);
+                finish(false);
+              }
+            });
+            input.addEventListener("blur", onBlur);
+            openBtn.replaceWith(input);
+            input.focus();
+            input.select();
+          });
+          const detach = document.createElement("button");
+          detach.type = "button";
+          detach.className = "detach";
+          detach.textContent = "-";
+          detach.title = "移除会话";
+          detach.addEventListener("click", (event) => {
+            event.stopPropagation();
+            detachChat(chat.chatId);
+          });
+          row.append(openBtn, rename, detach);
+          body.append(row);
+        }
+        item.append(head, body);
         sessions.append(item);
       }
-      if (!state.running && !state.remoteRunning) drainQueue();
     }
 
     async function refresh() {
       if (!state.chatId) return;
       try {
-        const response = await fetch("/api/session/" + state.chatId);
+        const response = await fetch("/api/session/" + state.chatId + "?turns=" + (state.historyTurns || 30));
         if (!response.ok) return;
-        const data = await response.json();
-        renderSnapshot(data);
+        renderSnapshot(await response.json());
       } catch {
         return;
       }
     }
 
     thread.addEventListener("scroll", () => {
+      if (!pinningThread) state.stickToBottom = threadNearBottom();
       if (state.running) return;
       syncPromptFromScroll();
     });
@@ -1229,15 +2140,32 @@
       return state.queues[state.chatId];
     }
 
+    function handedQueue() {
+      if (!state.handed[state.chatId]) state.handed[state.chatId] = [];
+      return state.handed[state.chatId];
+    }
+
     function renderQueue() {
       const list = document.querySelector("#queue");
-      const items = state.chatId && state.queues[state.chatId] ? state.queues[state.chatId] : [];
+      const waiting = state.chatId && state.queues[state.chatId] ? state.queues[state.chatId] : [];
+      const handed = state.chatId && state.handed[state.chatId] ? state.handed[state.chatId] : [];
       list.replaceChildren();
-      list.hidden = items.length === 0;
-      items.forEach((text, index) => {
+      list.hidden = waiting.length + handed.length === 0;
+      handed.forEach((text) => {
+        const item = document.createElement("li");
+        const label = document.createElement("span");
+        label.textContent = "已插入 · " + text.replace(/\s+/g, " ");
+        item.append(label);
+        list.append(item);
+      });
+      waiting.forEach((text, index) => {
         const item = document.createElement("li");
         const label = document.createElement("span");
         label.textContent = "等待 " + (index + 1) + " · " + text.replace(/\s+/g, " ");
+        const insert = document.createElement("button");
+        insert.type = "button";
+        insert.textContent = "插入";
+        insert.addEventListener("click", () => insertQueued(index));
         const remove = document.createElement("button");
         remove.type = "button";
         remove.textContent = "移除";
@@ -1245,9 +2173,43 @@
           chatQueue().splice(index, 1);
           renderQueue();
         });
-        item.append(label, remove);
+        item.append(label, insert, remove);
         list.append(item);
       });
+    }
+
+    let queueLock = false;
+
+    async function handoffWhileBusy(text) {
+      const response = await fetch("/api/steer", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ chatId: state.chatId, text }),
+      });
+      if (!response.ok) {
+        await response.json().catch(() => ({}));
+        return false;
+      }
+      await response.json().catch(() => ({}));
+      handedQueue().push(text);
+      return true;
+    }
+
+    async function flushQueueToServer() {
+      if (queueLock || !state.chatId || (!state.running && !state.remoteRunning)) return;
+      queueLock = true;
+      try {
+        const queue = state.queues[state.chatId];
+        while (queue && queue.length && (state.running || state.remoteRunning)) {
+          const text = queue[0];
+          if (!(await handoffWhileBusy(text))) break;
+          if (queue[0] === text) queue.shift();
+          renderQueue();
+        }
+      } finally {
+        queueLock = false;
+        if (!state.running && !state.remoteRunning) drainQueue();
+      }
     }
 
     function rememberInput(text) {
@@ -1264,8 +2226,23 @@
       renderQueue();
     }
 
+    async function insertQueued(index) {
+      const queue = chatQueue();
+      const text = queue[index];
+      if (!text || !state.chatId) return;
+      queue.splice(index, 1);
+      if (state.running || state.remoteRunning) {
+        queue.unshift(text);
+        renderQueue();
+        await flushQueueToServer();
+        return;
+      }
+      renderQueue();
+      sendText(text);
+    }
+
     function drainQueue() {
-      if (state.running || state.remoteRunning || !state.chatId) return;
+      if (queueLock || state.running || state.remoteRunning || !state.chatId) return;
       const queue = state.queues[state.chatId];
       if (!queue || !queue.length) return;
       const next = queue.shift();
@@ -1385,20 +2362,29 @@
       if (!text || !state.chatId) return;
       if (state.running || state.remoteRunning) {
         enqueue(text);
+        flushQueueToServer();
         return;
       }
+      const token = ++state.turnToken;
       const sentChat = state.chatId;
       rememberInput(text);
       state.running = true;
       state.pendingQuestion = text;
       setStatus("处理中", "run");
       addBubble("你", text, "user");
-      thread.scrollTop = thread.scrollHeight;
+      state.stickToBottom = true;
+      followThreadBottom();
       try {
         const response = await fetch("/api/message", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ chatId: state.chatId, text, cwd: state.cwd }),
+          body: JSON.stringify({
+            chatId: state.chatId,
+            text,
+            cwd: state.cwd,
+            modelId: document.querySelector("#model").value,
+            mode: document.querySelector("#mode").value,
+          }),
         });
         if (response.status === 409) {
           state.remoteRunning = true;
@@ -1412,6 +2398,7 @@
           const json = await response.json().catch(() => ({}));
           addBubble("失败", failureText(json.message || "发送失败"), "fail");
           setStatus("失败", "fail");
+          restoreComposer(text);
           return;
         }
         const reader = response.body.getReader();
@@ -1419,32 +2406,37 @@
         let buffer = "";
         const applyEvent = (item) => {
           if (!item || state.chatId !== sentChat) return;
-          if (item.type === "model" && item.model) meta.textContent = state.cwd + " · " + state.chatId + " · " + item.model;
+          if (item.type === "model" && item.model) meta.textContent = state.cwd + " · " + sessionLabel(state) + " · " + item.model;
           if (item.type === "thinking") toolLine.textContent = "思考中";
           if (item.type === "tool") toolLine.textContent = item.done ? "当前没有工具调用" : "正在调用：" + item.name;
           if (item.type === "step") {
             rememberStep(item.step);
             upsertActivity(item.step);
           }
+          if (item.type === "steer" && item.text) {
+            addBubble("你", item.text, "user");
+            followThreadBottom();
+          }
           if (item.type === "assistant" && item.text) absorbAssistant(item.text, item.fresh);
           if (item.type === "choice") showChoice(item.choice);
           if (item.type === "usage") renderUsage(item.usage);
           if (item.type === "done") {
             const stopped = item.cancelled === true;
-            if (!stopped && item.ok === false) {
-              addBubble("失败", failureText(item.message), "fail");
+            const failed = !stopped && item.ok === false;
+            if (failed) {
               setStatus("失败", "fail");
-            } else {
-              setStatus("空闲", "ok");
-            }
+              restoreComposer(text);
+            } else setStatus("空闲", "ok");
             const note = document.createElement("p");
-            note.className = "note " + (!stopped && item.ok !== false ? "turn-end" : "turn-fail");
-            note.textContent = stopped ? "已终止" : item.ok === false ? "本轮失败" : "本轮已结束";
+            note.className = "note " + (failed || stopped ? "turn-fail" : "turn-end");
+            note.textContent = failed || stopped ? failNote(stopped, item.message) : "本轮已结束";
             thread.append(note);
-            thread.scrollTop = thread.scrollHeight;
+            followThreadBottom();
           } else if (item.type === "error") {
             addBubble("失败", failureText(item.message), "fail");
             setStatus("失败", "fail");
+            restoreComposer(text);
+            followThreadBottom();
           }
         };
         while (true) {
@@ -1461,13 +2453,13 @@
       } catch (error) {
         addBubble("失败", failureText(error.message), "fail");
         setStatus("失败", "fail");
+        restoreComposer(text);
       } finally {
-        if (state.chatId === sentChat) {
-          state.running = false;
-          await refresh();
-        }
-        await loadState();
-        if (state.chatId === sentChat) drainQueue();
+        if (token !== state.turnToken) return;
+        if (state.chatId === sentChat) state.running = false;
+        try { await refresh(); } catch { /* 刷新失败也要继续把队列发出去 */ }
+        try { await loadState(); } catch { /* 状态失败也要继续把队列发出去 */ }
+        if (token === state.turnToken && state.chatId === sentChat) drainQueue();
       }
     }
 
@@ -1480,9 +2472,52 @@
       sendText(text);
     });
     document.querySelector("#cancel").addEventListener("click", () => cancelTurn());
+    document.querySelector("#pick-cwd").addEventListener("click", () => pickCwd());
+    document.querySelector("#create-chat").addEventListener("click", () => createChatFromPage(false));
+    document.querySelector("#reuse-chat").addEventListener("click", () => reuseExistingChat());
+    document.querySelector("#force-new-chat").addEventListener("click", () => createChatFromPage(true));
+    document.querySelector("#new-cwd").addEventListener("input", () => hideCreateChoice());
+    document.querySelector("#new-cwd").addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.altKey && !event.ctrlKey && !event.metaKey) {
+        event.preventDefault();
+        createChatFromPage(false);
+      }
+    });
 
+    document.querySelector("#model").addEventListener("change", (event) => {
+      state.modelId = event.currentTarget.value;
+      if (state.chatId) saveModel(state.chatId, state.modelId);
+    });
+    document.querySelector("#mode").addEventListener("change", (event) => {
+      state.mode = event.currentTarget.value;
+      event.currentTarget.title = modeTip(state.mode);
+      if (state.chatId) saveMode(state.chatId, state.mode);
+    });
+    document.querySelector("#toggle-proxy").addEventListener("click", () => {
+      const box = document.querySelector("#proxy-box");
+      const input = document.querySelector("#proxy-url");
+      const note = document.querySelector("#proxy-note");
+      box.hidden = !box.hidden;
+      if (!box.hidden) {
+        input.value = state.proxy || "";
+        note.textContent = "";
+        input.focus();
+        input.select();
+      }
+    });
+    document.querySelector("#save-proxy").addEventListener("click", () => saveProxy());
+    document.querySelector("#proxy-url").addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        saveProxy();
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        document.querySelector("#proxy-box").hidden = true;
+      }
+    });
     document.querySelector("#open-monitor").addEventListener("click", () => openMonitor());
     document.querySelector("#close-monitor").addEventListener("click", () => { monitor.hidden = true; });
+    loadModels();
     loadState().then(refresh);
     setInterval(() => {
       loadState();

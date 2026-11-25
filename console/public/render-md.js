@@ -28,8 +28,13 @@
     return cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
   }
 
+  function isTableRow(line) {
+    const text = String(line || "").trim();
+    return text.includes("|") && !isSeparator(text);
+  }
+
   function isTableStart(lines, index) {
-    return index + 1 < lines.length && String(lines[index]).includes("|") && isSeparator(lines[index + 1]);
+    return index + 1 < lines.length && isTableRow(lines[index]) && isSeparator(lines[index + 1]);
   }
 
   function alignOf(cell) {
@@ -45,7 +50,7 @@
     const align = splitCells(lines[index + 1]).map(alignOf);
     const body = [];
     let cursor = index + 2;
-    while (cursor < lines.length && String(lines[cursor]).includes("|") && String(lines[cursor]).trim()) {
+    while (cursor < lines.length && isTableRow(lines[cursor]) && String(lines[cursor]).trim()) {
       body.push(splitCells(lines[cursor]));
       cursor += 1;
     }
@@ -59,8 +64,27 @@
     return { html, next: cursor };
   }
 
+  function normalizeChunk(text) {
+    let value = String(text || "");
+    // Headings jammed onto the previous sentence, with or without a space: "text。##标题"
+    value = value.replace(/([^\n#])(#{1,6})(\s*)(\S)/g, "$1\n$2 $4");
+    // Table starting on the same line after a colon/period: "模块：|模型 |路径 |"
+    value = value.replace(/([：:。；;！!？?）)\]])\s*(\|[^|\n]+\|)/g, "$1\n$2");
+    // Separator jammed with the next row: "|---|---|| cell | cell |"
+    value = value.replace(/((?:\|?\s*:?-{3,}:?\s*){2,}\|?)(?=\|[^-\n])/g, "$1\n");
+    return value;
+  }
+
+  function normalizeMarkdown(text) {
+    return String(text || "")
+      .replace(/\r\n/g, "\n")
+      .split(/(```[\s\S]*?```)/)
+      .map((chunk) => (chunk.startsWith("```") ? chunk : normalizeChunk(chunk)))
+      .join("");
+  }
+
   function renderMarkdown(text) {
-    const lines = String(text || "").replace(/\r\n/g, "\n").split("\n");
+    const lines = normalizeMarkdown(text).split("\n");
     const html = [];
     let index = 0;
     while (index < lines.length) {
@@ -87,6 +111,17 @@
         const table = renderTable(lines, index);
         html.push(table.html);
         index = table.next;
+        continue;
+      }
+      // Prose and a table header jammed on one line: "说明文字 |模型 |路径 |"
+      const jammed = /^(.*?)(\|[^|\n]+\|[^|\n]*\|.*)$/.exec(line);
+      if (jammed && index + 1 < lines.length && isSeparator(lines[index + 1])) {
+        const before = jammed[1].trim();
+        if (before) html.push("<p>" + renderInline(before) + "</p>");
+        const tableLines = [jammed[2], ...lines.slice(index + 1)];
+        const table = renderTable(tableLines, 0);
+        html.push(table.html);
+        index += table.next;
         continue;
       }
       const heading = /^(#{1,6})\s+(.*)$/.exec(line);
@@ -128,7 +163,21 @@
         continue;
       }
       const para = [];
-      while (index < lines.length && lines[index].trim() && !lines[index].startsWith("```") && !/^#{1,6}\s+/.test(lines[index]) && !/^\s*[-*]\s+/.test(lines[index]) && !/^\s*\d+\.\s+/.test(lines[index]) && !/^\s*>\s?/.test(lines[index]) && !isTableStart(lines, index)) {
+      while (
+        index < lines.length
+        && lines[index].trim()
+        && !lines[index].startsWith("```")
+        && !/^#{1,6}\s+/.test(lines[index])
+        && !/^\s*[-*]\s+/.test(lines[index])
+        && !/^\s*\d+\.\s+/.test(lines[index])
+        && !/^\s*>\s?/.test(lines[index])
+        && !isTableStart(lines, index)
+        && !(
+          /^(.*?)(\|[^|\n]+\|[^|\n]*\|.*)$/.test(lines[index])
+          && index + 1 < lines.length
+          && isSeparator(lines[index + 1])
+        )
+      ) {
         para.push(lines[index]);
         index += 1;
       }
