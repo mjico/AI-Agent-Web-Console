@@ -229,6 +229,10 @@
     }
     .choices .other button.option { width: auto; }
     .choices .other input { flex: 1; font: inherit; color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; }
+    .choices .choice-actions { display: flex; gap: 8px; margin: 10px 0 4px; }
+    .choices .choice-actions button { padding: 6px 14px; }
+    .choices .choice-actions button.secondary { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+    .choices .choice-actions button:disabled { opacity: 0.55; }
     .queue { list-style: none; margin: 0; padding: 8px 18px 0; max-height: 120px; overflow: auto; }
     .queue[hidden] { display: none; }
     .queue li { display: flex; gap: 8px; align-items: center; margin: 0 0 4px; }
@@ -257,15 +261,16 @@
       width: auto; max-width: 220px; min-width: 0; font: inherit; color: var(--ink); background: #fff;
       border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px;
     }
-    .model-row input[type="text"] {
+    .model-row input[type="text"], .model-row input[type="password"] {
       width: 200px; max-width: 100%; min-width: 0; font: inherit; color: var(--ink); background: #fff;
       border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px;
     }
     .model-row button.ghost {
       background: transparent; color: var(--ink); border: 1px solid var(--line); padding: 6px 10px;
     }
+    .model-row button.ghost:disabled { opacity: 0.6; }
     .model-row .proxy-box { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-    .model-row .proxy-box[hidden] { display: none; }
+    .model-row .proxy-box[hidden], .model-row button[hidden] { display: none; }
     .model-row .proxy-note { font-size: 12px; color: var(--muted); }
     .model-row .zoom-box { display: inline-flex; gap: 4px; align-items: center; margin-left: auto; }
     .model-row .zoom-box button { min-width: 40px; padding: 6px 8px; }
@@ -346,6 +351,13 @@
             <button type="button" id="save-proxy" class="ghost">保存</button>
             <span id="proxy-note" class="proxy-note"></span>
           </span>
+          <button type="button" id="toggle-apikey" class="ghost" title="配置或修改 Cursor API Key（先验证再替换，不回显明文）">API Key：默认</button>
+          <span id="apikey-box" class="proxy-box" hidden>
+            <input id="apikey-input" type="password" placeholder="输入新 API Key（不回显）" autocomplete="new-password" spellcheck="false">
+            <button type="button" id="save-apikey" class="ghost">验证并保存</button>
+            <button type="button" id="clear-apikey" class="ghost" hidden title="清除自定义 Key，改回本机默认登录">恢复默认</button>
+            <span id="apikey-note" class="proxy-note"></span>
+          </span>
           <span class="zoom-box" role="group" aria-label="对话框字体大小">
             <button type="button" id="zoom-out" class="ghost" title="对话框字体缩小">A-</button>
             <button type="button" id="zoom-reset" class="ghost" title="恢复默认字体大小">100%</button>
@@ -393,6 +405,7 @@
       modelId: "",
       mode: "",
       proxy: "",
+      hasApiKey: false,
       promptRestoreKey: "",
       running: false,
       steps: [],
@@ -408,6 +421,7 @@
       choiceSelected: {},
       choiceFreeform: {},
       dismissedChoiceId: "",
+      dismissedChoices: {},
       queues: {},
       handed: {},
       remoteRunning: false,
@@ -1273,9 +1287,21 @@
       return ids.length > 0 || (other && text.length > 0);
     }
 
+    function dismissedSet(chatId) {
+      const key = chatId || state.chatId || "";
+      if (!state.dismissedChoices[key]) state.dismissedChoices[key] = new Set();
+      return state.dismissedChoices[key];
+    }
+
+    function markChoiceDone(choiceId) {
+      if (!choiceId) return;
+      state.dismissedChoiceId = choiceId;
+      dismissedSet().add(choiceId);
+    }
+
     function showChoice(choice) {
       if (!choice || !choice.questions || !choice.questions.length) return;
-      if (choice.id === state.dismissedChoiceId) return;
+      if (choice.id === state.dismissedChoiceId || dismissedSet().has(choice.id)) return;
       if (state.choice && state.choice.id === choice.id) return;
       state.choice = choice;
       state.choiceQuestion = 0;
@@ -1286,7 +1312,17 @@
     }
 
     function dismissChoice() {
-      if (state.choice) state.dismissedChoiceId = state.choice.id;
+      const choiceId = state.choice ? state.choice.id : "";
+      if (choiceId) {
+        markChoiceDone(choiceId);
+        if (state.chatId) {
+          fetch("/api/choice/dismiss", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ chatId: state.chatId, choiceId }),
+          }).catch(() => {});
+        }
+      }
       state.choice = null;
       renderChoices();
     }
@@ -1352,11 +1388,31 @@
           state.choiceOption = index;
           selectHighlighted();
         });
+        button.addEventListener("dblclick", () => {
+          state.choiceOption = index;
+          if (!selectedIds(question).includes(option.id)) selectHighlighted();
+          advanceChoice();
+        });
         box.append(button);
       });
+      const actions = document.createElement("div");
+      actions.className = "choice-actions";
+      const allReady = questions.every((item) => questionAnswered(item));
+      const submitBtn = document.createElement("button");
+      submitBtn.type = "button";
+      submitBtn.textContent = allReady || questions.length === 1 ? "提交选择（Enter）" : "下一题（Enter）";
+      submitBtn.disabled = !questionAnswered(question);
+      submitBtn.addEventListener("click", () => advanceChoice());
+      const skipBtn = document.createElement("button");
+      skipBtn.type = "button";
+      skipBtn.className = "secondary";
+      skipBtn.textContent = "跳过（Esc）";
+      skipBtn.addEventListener("click", () => dismissChoice());
+      actions.append(submitBtn, skipBtn);
+      box.append(actions);
       const hint = document.createElement("p");
       hint.className = "hint";
-      hint.textContent = "↑/↓ 选项 · ←/→ 题目 · 空格选定 · 回车下一题或提交 · Esc 跳过。命令行这一轮会先跳过提问，选完后这里把结果发给下一轮。";
+      hint.textContent = "单击选中（双击直接提交）· ↑/↓ 选项 · ←/→ 题目 · 回车或点「提交选择」发出 · Esc 跳过。";
       box.append(hint);
       if (focusPanel && document.activeElement !== document.querySelector("#message")) box.focus();
     }
@@ -1430,10 +1486,11 @@
         return;
       }
       const text = choiceAnswer();
-      state.dismissedChoiceId = state.choice.id;
+      const choiceId = state.choice.id;
+      markChoiceDone(choiceId);
       state.choice = null;
       renderChoices();
-      sendText(text);
+      sendText(text, choiceId);
     }
 
     function choiceKey(event) {
@@ -1793,6 +1850,64 @@
       }
     }
 
+    function applyApiKeyState(hasApiKey) {
+      const configured = Boolean(hasApiKey);
+      state.hasApiKey = configured;
+      const btn = document.querySelector("#toggle-apikey");
+      const clearBtn = document.querySelector("#clear-apikey");
+      if (btn) {
+        btn.textContent = configured ? "API Key：已配置" : "API Key：默认";
+        btn.title = configured
+          ? "已配置自定义 API Key（不回显明文，点击可验证替换或恢复默认）"
+          : "配置或修改 Cursor API Key（先验证再替换，不回显明文）";
+      }
+      if (clearBtn) clearBtn.hidden = !configured;
+    }
+
+    async function saveApiKey(clear) {
+      const input = document.querySelector("#apikey-input");
+      const saveBtn = document.querySelector("#save-apikey");
+      const clearBtn = document.querySelector("#clear-apikey");
+      const note = document.querySelector("#apikey-note");
+      if (!input || !note) return;
+      const candidate = clear ? "" : input.value.trim();
+      if (!clear && !candidate) {
+        note.textContent = "请输入新的 API Key";
+        note.style.color = "var(--fail)";
+        input.focus();
+        return;
+      }
+      input.value = "";
+      if (saveBtn) saveBtn.disabled = true;
+      if (clearBtn) clearBtn.disabled = true;
+      note.textContent = clear ? "正在恢复默认认证…" : "正在验证 API Key…";
+      note.style.color = "";
+      try {
+        const response = await fetch("/api/api-key", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(clear ? { clear: true } : { apiKey: candidate }),
+        });
+        const json = await response.json();
+        if (!response.ok || !json.ok) {
+          note.textContent = json.message || "验证失败，原配置未变";
+          note.style.color = "var(--fail)";
+          return;
+        }
+        applyApiKeyState(Boolean(json.hasApiKey));
+        if (Array.isArray(json.models) && json.models.length) fillModelSelect(json.models);
+        else loadModels();
+        note.textContent = json.hasApiKey ? "验证通过，已替换生效" : "已恢复本机默认登录";
+        note.style.color = "";
+      } catch (error) {
+        note.textContent = error.message || "请求失败，原配置未变";
+        note.style.color = "var(--fail)";
+      } finally {
+        if (saveBtn) saveBtn.disabled = false;
+        if (clearBtn) clearBtn.disabled = false;
+      }
+    }
+
     async function loadState() {
       let response;
       try {
@@ -1804,6 +1919,7 @@
       const json = await response.json().catch(() => null);
       if (!json) return;
       applyProxyState(json.proxy || "");
+      applyApiKeyState(Boolean(json.hasApiKey));
       const chats = json.chats || [];
       const current = chats.find((chat) => chat.chatId === state.chatId);
       if (current) {
@@ -1818,7 +1934,13 @@
         if (arrived && arrived.chatId !== state.chatId) followChat(arrived.chatId);
       }
       seenChatIds = new Set(chats.map((chat) => chat.chatId));
-      state.remoteRunning = (json.runningChatIds || []).includes(state.chatId);
+      const runningIds = json.runningChatIds || [];
+      for (const id of Object.keys(state.handed)) {
+        if (!runningIds.includes(id) && !(id === state.chatId && state.running) && state.handed[id]?.length) {
+          state.handed[id] = [];
+        }
+      }
+      state.remoteRunning = runningIds.includes(state.chatId);
       if (state.running && !state.remoteRunning) {
         state.idleWhileLocal += 1;
         if (state.idleWhileLocal >= 3) {
@@ -1830,9 +1952,10 @@
       }
       const cancel = document.querySelector("#cancel");
       if (cancel) cancel.hidden = !(state.running || state.remoteRunning);
-      try { renderSessionGroups(chats, json.runningChatIds || []); } catch { /* 列表失败也不要挡住发送 */ }
+      try { renderSessionGroups(chats, runningIds); } catch { /* 列表失败也不要挡住发送 */ }
       if (!state.running && !state.remoteRunning) {
-        if (state.handed[state.chatId]) state.handed[state.chatId] = [];
+        if (state.handed[state.chatId]?.length) state.handed[state.chatId] = [];
+        renderQueue();
         drainQueue();
       } else {
         flushQueueToServer();
@@ -2166,7 +2289,8 @@
         item.append(label);
         list.append(item);
       });
-      waiting.forEach((text, index) => {
+      waiting.forEach((entry, index) => {
+        const text = queueTextOf(entry);
         const item = document.createElement("li");
         const label = document.createElement("span");
         label.textContent = "等待 " + (index + 1) + " · " + text.replace(/\s+/g, " ");
@@ -2188,18 +2312,20 @@
 
     let queueLock = false;
 
-    async function handoffWhileBusy(text) {
+    async function handoffWhileBusy(item) {
+      const text = typeof item === "string" ? item : item.text;
+      const choiceId = typeof item === "object" && item ? item.choiceId || "" : "";
       const response = await fetch("/api/steer", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ chatId: state.chatId, text }),
+        body: JSON.stringify({ chatId: state.chatId, text, choiceId }),
       });
       if (!response.ok) {
         await response.json().catch(() => ({}));
         return false;
       }
-      await response.json().catch(() => ({}));
-      handedQueue().push(text);
+      const json = await response.json().catch(() => ({}));
+      if (!json.deduplicated && !handedQueue().includes(text)) handedQueue().push(text);
       return true;
     }
 
@@ -2209,9 +2335,9 @@
       try {
         const queue = state.queues[state.chatId];
         while (queue && queue.length && (state.running || state.remoteRunning)) {
-          const text = queue[0];
-          if (!(await handoffWhileBusy(text))) break;
-          if (queue[0] === text) queue.shift();
+          const head = queue[0];
+          if (!(await handoffWhileBusy(head))) break;
+          if (queue[0] === head) queue.shift();
           renderQueue();
         }
       } finally {
@@ -2228,25 +2354,37 @@
       state.historyDraft = "";
     }
 
-    function enqueue(text) {
-      rememberInput(text);
-      chatQueue().push(text);
+    function queueTextOf(item) {
+      return typeof item === "string" ? item : (item && item.text ? item.text : "");
+    }
+
+    function enqueue(text, choiceId) {
+      const clean = String(text || "").trim();
+      if (!clean) return;
+      rememberInput(clean);
+      const queue = chatQueue();
+      const handed = handedQueue();
+      if (queue.some((item) => queueTextOf(item) === clean) || handed.includes(clean)) {
+        renderQueue();
+        return;
+      }
+      queue.push(choiceId ? { text: clean, choiceId } : clean);
       renderQueue();
     }
 
     async function insertQueued(index) {
       const queue = chatQueue();
-      const text = queue[index];
-      if (!text || !state.chatId) return;
+      const entry = queue[index];
+      if (!entry || !state.chatId) return;
       queue.splice(index, 1);
       if (state.running || state.remoteRunning) {
-        queue.unshift(text);
+        queue.unshift(entry);
         renderQueue();
         await flushQueueToServer();
         return;
       }
       renderQueue();
-      sendText(text);
+      sendText(queueTextOf(entry), typeof entry === "object" ? entry.choiceId : "");
     }
 
     function drainQueue() {
@@ -2255,7 +2393,7 @@
       if (!queue || !queue.length) return;
       const next = queue.shift();
       renderQueue();
-      sendText(next);
+      sendText(queueTextOf(next), typeof next === "object" ? next.choiceId : "");
     }
 
     function undoPendingSend(text) {
@@ -2366,10 +2504,10 @@
       return text;
     }
 
-    async function sendText(text) {
+    async function sendText(text, choiceId) {
       if (!text || !state.chatId) return;
       if (state.running || state.remoteRunning) {
-        enqueue(text);
+        enqueue(text, choiceId);
         flushQueueToServer();
         return;
       }
@@ -2398,7 +2536,8 @@
           state.remoteRunning = true;
           state.pendingQuestion = "";
           undoPendingSend(text);
-          enqueue(text);
+          enqueue(text, choiceId);
+          flushQueueToServer();
           setStatus("处理中", "run");
           return;
         }
@@ -2425,10 +2564,22 @@
             addBubble("你", item.text, "user");
             followThreadBottom();
           }
+          if (item.type === "steer-done" && item.text) {
+            const handed = state.handed[sentChat];
+            if (Array.isArray(handed)) {
+              const idx = handed.indexOf(item.text);
+              if (idx >= 0) handed.splice(idx, 1);
+              if (state.chatId === sentChat) renderQueue();
+            }
+          }
           if (item.type === "assistant" && item.text) absorbAssistant(item.text, item.fresh);
           if (item.type === "choice") showChoice(item.choice);
           if (item.type === "usage") renderUsage(item.usage);
           if (item.type === "done") {
+            if (state.handed[sentChat]?.length) {
+              state.handed[sentChat] = [];
+              if (state.chatId === sentChat) renderQueue();
+            }
             const stopped = item.cancelled === true;
             const failed = !stopped && item.ok === false;
             if (failed) {
@@ -2533,6 +2684,27 @@
     document.querySelector("#zoom-in").addEventListener("click", () => applyThreadZoom(threadZoom + ZOOM_STEP));
     document.querySelector("#zoom-reset").addEventListener("click", () => applyThreadZoom(100));
     applyThreadZoom(threadZoom);
+    document.querySelector("#toggle-apikey").addEventListener("click", () => {
+      const box = document.querySelector("#apikey-box");
+      const input = document.querySelector("#apikey-input");
+      const note = document.querySelector("#apikey-note");
+      box.hidden = !box.hidden;
+      input.value = "";
+      note.textContent = "";
+      if (!box.hidden) input.focus();
+    });
+    document.querySelector("#save-apikey").addEventListener("click", () => saveApiKey(false));
+    document.querySelector("#clear-apikey").addEventListener("click", () => saveApiKey(true));
+    document.querySelector("#apikey-input").addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        saveApiKey(false);
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        event.currentTarget.value = "";
+        document.querySelector("#apikey-box").hidden = true;
+      }
+    });
     document.querySelector("#save-proxy").addEventListener("click", () => saveProxy());
     document.querySelector("#proxy-url").addEventListener("keydown", (event) => {
       if (event.key === "Enter") {

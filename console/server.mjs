@@ -64,21 +64,49 @@ function loadState() {
     return {
       activeChatId: data.activeChatId || null,
       proxy: typeof data.proxy === "string" ? data.proxy : "",
+      apiKey: typeof data.apiKey === "string" ? data.apiKey : "",
       chats: Array.isArray(data.chats) ? data.chats : [],
     };
   } catch {
-    return { activeChatId: null, proxy: "", chats: [] };
+    return { activeChatId: null, proxy: "", apiKey: "", chats: [] };
   }
 }
 
 function saveState(state) {
   const prev = loadState();
+  const proxy = typeof state.proxy === "string" ? state.proxy : prev.proxy;
+  const apiKey = typeof state.apiKey === "string" ? state.apiKey : prev.apiKey;
   const next = {
     activeChatId: state.activeChatId ?? null,
-    ...(typeof state.proxy === "string" ? (state.proxy ? { proxy: state.proxy } : {}) : (prev.proxy ? { proxy: prev.proxy } : {})),
+    ...(proxy ? { proxy } : {}),
+    ...(apiKey ? { apiKey } : {}),
     chats: Array.isArray(state.chats) ? state.chats : [],
   };
-  fs.writeFileSync(statePath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+  fs.writeFileSync(statePath, `${JSON.stringify(next, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+}
+
+function cleanApiKey(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return { ok: true, apiKey: "" };
+  if (/[\r\n\0\s]/.test(raw) || raw.length < 8 || raw.length > 512) {
+    return { ok: false, message: "API Key 格式无效" };
+  }
+  return { ok: true, apiKey: raw };
+}
+
+function configuredApiKey() {
+  const saved = cleanApiKey(loadState().apiKey);
+  return saved.ok ? saved.apiKey : "";
+}
+
+function stripAnsi(text) {
+  return String(text || "").replace(/\x1b\[[0-9;]*m/g, "");
+}
+
+function redactSecret(text, secret) {
+  const clean = stripAnsi(text).trim();
+  if (!secret) return clean;
+  return clean.split(secret).join("***");
 }
 
 function cleanProxyUrl(value) {
@@ -103,8 +131,11 @@ function configuredProxy() {
   return saved.ok ? saved.proxy : "";
 }
 
-function cliEnv() {
+function cliEnv(overrideApiKey) {
   const env = { ...process.env, CURSOR_INVOKED_AS: process.platform === "win32" ? "agent.cmd" : "agent" };
+  const apiKey = typeof overrideApiKey === "string" ? overrideApiKey : configuredApiKey();
+  if (apiKey) env.CURSOR_API_KEY = apiKey;
+  else if (overrideApiKey === "") delete env.CURSOR_API_KEY;
   const proxy = configuredProxy();
   if (proxy) {
     env.HTTPS_PROXY = proxy;
@@ -458,11 +489,11 @@ function parseModelList(text) {
   return models;
 }
 
-function fetchModelList() {
+function fetchModelList(overrideApiKey) {
   return new Promise((resolve, reject) => {
     const options = {
       cwd: root,
-      env: cliEnv(),
+      env: cliEnv(overrideApiKey),
       windowsHide: true,
     };
     const child = process.platform === "win32"
@@ -474,7 +505,9 @@ function fetchModelList() {
       : spawn(linuxAgentBin(), ["models"], options);
     let out = "";
     let err = "";
+    let timedOut = false;
     const timer = setTimeout(() => {
+      timedOut = true;
       child.kill();
     }, 25000);
     child.stdout.on("data", (chunk) => {
@@ -489,9 +522,16 @@ function fetchModelList() {
     });
     child.on("exit", (code) => {
       clearTimeout(timer);
+      if (code !== 0) {
+        const msg = timedOut
+          ? "验证超时，请检查网络或代理设置"
+          : redactSecret(err || out, overrideApiKey || configuredApiKey()) || `模型列表退出码 ${code ?? "?"}`;
+        reject(new Error(msg));
+        return;
+      }
       const models = parseModelList(`${out}\n${err}`);
       if (!models.length) {
-        reject(new Error(err.trim() || out.trim() || `模型列表退出码 ${code ?? "?"}`));
+        reject(new Error(redactSecret(err || out, overrideApiKey || configuredApiKey()) || `模型列表退出码 ${code ?? "?"}`));
         return;
       }
       resolve(models);
@@ -1290,8 +1330,20 @@ function publishChoice(session, event, emit) {
   if (!choice) return;
   const signature = choice.questions.map((question) => `${question.prompt}\n${question.options.map((option) => option.label).join("|")}`).join("\n");
   if (session.pendingChoice && session.pendingChoice.signature === signature) return;
+  if (session.answeredChoices instanceof Set && session.answeredChoices.has(signature)) return;
   session.pendingChoice = { id: signature, signature, ...choice };
   emit({ type: "choice", choice: session.pendingChoice });
+}
+
+function activeSteerOf(session) {
+  return typeof session?.activeSteer === "string" ? session.activeSteer : "";
+}
+
+function consumePendingChoice(session, explicitId) {
+  if (!(session.answeredChoices instanceof Set)) session.answeredChoices = new Set();
+  const id = explicitId || session.pendingChoice?.signature || "";
+  if (id) session.answeredChoices.add(id);
+  session.pendingChoice = null;
 }
 
 function cliScript() {
@@ -1780,7 +1832,12 @@ function startTurn(chatId, cwd, text, res, modelId, mode) {
   session.assistantBreak = false;
   session.note = "";
   session.failReason = "";
-  session.pendingChoice = null;
+  consumePendingChoice(session);
+  if (text.startsWith("我的选择：")) {
+    /* keep answeredChoices so a resumed follow-up will not re-surface the same question */
+  } else {
+    session.answeredChoices = new Set();
+  }
   session.steers = [];
   session.turnResult = null;
   if (!session.name && !chatPreview(chatId)) session.name = titleFromText(text);
@@ -1805,11 +1862,18 @@ function startTurn(chatId, cwd, text, res, modelId, mode) {
   emit({ type: "user", text });
   let finished = false;
   running.set(chatId, { cancelled: false, pid: null });
+  session.activeSteer = "";
   const finish = (ok, message) => {
     if (finished) return;
+    if (session.activeSteer) {
+      emit({ type: "steer-done", text: session.activeSteer });
+      session.activeSteer = "";
+    }
     if (!session.cancelled && acceptFollowups) {
       const next = Array.isArray(session.steers) ? session.steers.shift() : "";
       if (next) {
+        session.activeSteer = next;
+        consumePendingChoice(session);
         session.status = "running";
         session.tool = "";
         session.assistantBreak = true;
@@ -1825,6 +1889,7 @@ function startTurn(chatId, cwd, text, res, modelId, mode) {
     running.delete(chatId);
     turnEmit.delete(chatId);
     session.steers = [];
+    session.activeSteer = "";
     if (session.status === "running") session.status = ok ? "idle" : "failed";
     session.tool = "";
     if (session.cancelled) session.status = "idle";
@@ -2034,11 +2099,45 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, { ok: true, proxy: checked.proxy });
       return;
     }
+    if (req.method === "POST" && url.pathname === "/api/api-key") {
+      const body = await readBody(req);
+      if (body.clear === true) {
+        const state = loadState();
+        saveState({ activeChatId: state.activeChatId, apiKey: "", chats: state.chats });
+        modelCache = { at: 0, models: null };
+        sendJson(res, 200, { ok: true, hasApiKey: false });
+        return;
+      }
+      const raw = typeof body.apiKey === "string" ? body.apiKey.trim() : "";
+      if (!raw) {
+        sendJson(res, 400, { ok: false, message: "请输入新的 API Key" });
+        return;
+      }
+      const checked = cleanApiKey(raw);
+      if (!checked.ok) {
+        sendJson(res, 400, { ok: false, message: checked.message });
+        return;
+      }
+      try {
+        const models = await fetchModelList(checked.apiKey);
+        const state = loadState();
+        saveState({ activeChatId: state.activeChatId, apiKey: checked.apiKey, chats: state.chats });
+        modelCache = { at: Date.now(), models };
+        sendJson(res, 200, { ok: true, hasApiKey: true, models });
+      } catch (error) {
+        const detail = redactSecret(error instanceof Error ? error.message : String(error), checked.apiKey)
+          .split(/\r?\n/)[0]
+          .slice(0, 200);
+        sendJson(res, 400, { ok: false, message: `验证未通过，未替换原配置：${detail || "API Key 无效"}` });
+      }
+      return;
+    }
     if (req.method === "GET" && url.pathname === "/api/state") {
       const state = loadState();
       sendJson(res, 200, {
         activeChatId: state.activeChatId,
         proxy: configuredProxy(),
+        hasApiKey: Boolean(configuredApiKey()),
         chats: state.chats.filter((item) => item && item.chatId).map(publicChat),
         runningChatIds: [...running.keys()],
       });
@@ -2208,9 +2307,25 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       if (!Array.isArray(session.steers)) session.steers = [];
+      consumePendingChoice(session, typeof body.choiceId === "string" ? body.choiceId : "");
+      if (session.steers.includes(text) || activeSteerOf(session) === text) {
+        sendJson(res, 200, { ok: true, deduplicated: true });
+        return;
+      }
       session.steers.push(text);
       session.live.push({ role: "user", text });
       emit({ type: "steer", text });
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/choice/dismiss") {
+      const body = await readBody(req);
+      if (!chatIdPattern.test(body.chatId || "")) {
+        sendJson(res, 400, { ok: false, message: "需要 chatId。" });
+        return;
+      }
+      const session = sessionOf(body.chatId);
+      consumePendingChoice(session, typeof body.choiceId === "string" ? body.choiceId : "");
       sendJson(res, 200, { ok: true });
       return;
     }
